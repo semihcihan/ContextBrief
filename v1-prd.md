@@ -1,7 +1,7 @@
 # Context Generator V1 PRD
 
 ## Product Summary
-Context Generator is a local-first macOS menu bar app that helps users capture, organize, and reuse context for LLMs and coding agents. The app captures context from desktop apps and browser tabs, enriches it with the user's own model API key, auto-links related contexts, and lets users quickly assemble reusable context packs.
+Context Generator is a local-first macOS menu bar app that helps users capture, organize, and reuse context for LLMs and coding agents. The app captures context from desktop apps and browser tabs, densifies captures with the user's own model API key, and organizes captures as pieces under a user-selected current context.
 
 ## Problem
 Users collect relevant information across many surfaces (desktop apps, browser tabs, docs, chats, code), but turning that into high-quality model input is slow and manual.
@@ -10,7 +10,7 @@ Users collect relevant information across many surfaces (desktop apps, browser t
 - Capture context from the currently active macOS app and browser tab with low friction.
 - Trigger capture from a menu bar button or global shortcut.
 - Process captures with user-provided model credentials (OpenAI, Anthropic, Google).
-- Automatically summarize, categorize, and link related contexts.
+- Densify captured content to remove repetitive UI noise while preserving meaningful information.
 - Store all captured data locally with privacy-first defaults.
 - Let users quickly select and copy one or more contexts for model use.
 
@@ -33,10 +33,10 @@ Users collect relevant information across many surfaces (desktop apps, browser t
    - Press global shortcut or click menu bar action.
    - App captures current context from active desktop app or browser tab.
    - App stores raw capture and processed output locally.
-3. **Auto-Enrich**
-   - App summarizes, tags, and links context automatically using user model.
+3. **Densify**
+   - App processes each capture piece into concise high-signal output using user model.
 4. **Reuse**
-   - Open menu bar panel, search/select contexts, copy formatted result.
+   - Open menu bar panel, select current context, and copy formatted result.
 
 ## Functional Requirements
 
@@ -71,52 +71,47 @@ Users collect relevant information across many surfaces (desktop apps, browser t
 ### 4) LLM Processing (User Key)
 - Provider support: OpenAI, Anthropic, Google only.
 - Store API key in macOS Keychain.
-- For each capture, run enrichment:
-  - Summary (short and detailed).
-  - Category labels.
-  - Entities/keywords.
-  - Suggested links to existing contexts.
+- For each capture piece, run densification:
+  - Remove low-signal boilerplate and duplicated UI strings.
+  - Keep factual details from source capture intact.
+  - Produce concise dense text for prompt usage.
 
-### 5) Automatic Linking
-- Manual-only curation is not sufficient for V1.
-- Auto-linking must happen by default after each processed capture.
-- Linking approach:
-  - Retrieve candidates from local index (metadata + semantic similarity).
-  - Use LLM to score/confirm top links.
-  - Save link type and confidence.
-- Users can still edit links, but core value must come from automatic linking.
+### 5) Context Session Workflow
+- One selected **current context** is active at a time.
+- Each capture produces a **capture piece** appended to current context.
+- Required commands:
+  - Create new context.
+  - Select existing context as current.
+  - Undo last capture piece in current context.
+  - Promote last capture piece into a new context.
 
 ### 6) Local Context Library
 - Local storage for:
-  - Raw capture data.
-  - Processed summaries/tags.
-  - Links/relations.
+  - Contexts and ordered capture pieces.
+  - Raw capture data and densified output per piece.
   - Source metadata.
-- Search and filter by app, date, tags, and keyword.
-- Open a context to inspect and edit text/metadata.
+- Search and filter by app, date, and keyword.
+- Open a context, inspect pieces, and keep appending by setting it as current.
 
 ### 7) Reuse and Export
-- Multi-select contexts in library.
-- Generate reusable output from selected contexts:
-  - Compact prompt mode.
-  - Detailed prompt mode.
-- Copy output to clipboard from menu bar flow.
+- Export/copy the current or selected context.
+- Output modes:
+  - Dense mode (default).
+  - Raw mode (verbatim pieces).
 
 ## Data Model (V1)
-- **ContextItem**
+- **Context**
   - `id`, `createdAt`, `updatedAt`
+  - `title`
+  - `isCurrent`
+  - `pieceCount`
+- **CapturePiece**
+  - `id`, `contextId`, `createdAt`, `sequence`
   - `sourceType` (`desktop_app` | `browser_tab`)
   - `appName`, `windowTitle`, `url?`
-  - `captureMethod` (`accessibility` | `screenshot` | `hybrid`)
-  - `rawContent`, `normalizedContent`
-  - `summaryShort`, `summaryLong`
-  - `categories[]`, `keywords[]`
+  - `captureMethod` (`accessibility` | `screenshot_ocr` | `hybrid`)
+  - `rawContent`, `ocrContent`, `denseContent`
   - `provider`, `model`
-- **ContextLink**
-  - `id`, `fromContextId`, `toContextId`
-  - `relationType`
-  - `confidence`
-  - `createdAt`
 - **ProviderConfig**
   - `provider` (`openai` | `anthropic` | `google`)
   - `keychainReference`
@@ -138,9 +133,9 @@ Users collect relevant information across many surfaces (desktop apps, browser t
 ## Success Metrics (V1)
 - Capture success rate >= 95%.
 - Median capture-to-processed time <= 10s.
-- >= 70% of captures produce at least one accepted auto-link candidate.
+- >= 85% of captures produce usable dense output without manual cleanup.
 - Weekly active usage: users perform at least 3 capture sessions/week.
-- Reuse rate: >= 50% of captured contexts are later selected for export/copy.
+- Reuse rate: >= 50% of contexts are later selected for export/copy.
 
 ## Milestones
 1. **M1 - App Foundation**
@@ -149,13 +144,12 @@ Users collect relevant information across many surfaces (desktop apps, browser t
    - Accessibility + screenshot capture, metadata normalization.
 3. **M3 - LLM Enrichment**
    - Provider setup, summarization/categorization, keychain integration.
-4. **M4 - Auto-Linking + Library**
-   - Candidate retrieval, LLM link scoring, searchable library.
+4. **M4 - Context Sessions + Library**
+   - Current-context workflow, undo/promote commands, searchable library.
 5. **M5 - Reuse Flow**
-   - Multi-select export, prompt templates, clipboard integration.
+   - Export modes, prompt formatting, clipboard integration.
 
 ## Open Questions for Next Iteration
 - Should browser capture include a lightweight browser extension in V1.1 for higher-fidelity page extraction?
-- Which embedding strategy should power candidate retrieval (provider-native embeddings vs local model)?
 - What is the default global shortcut?
 - What retention controls should be offered (e.g., auto-delete after N days)?

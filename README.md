@@ -1,13 +1,21 @@
-# Context Generator Demo
+# Context Generator V1 Prototype
 
-Minimal macOS menu bar demo for testing capture reliability from desktop apps and web pages.
+Local-first macOS menu bar app for collecting context from desktop apps and browser tabs into a selected current context.
 
-## What this demo does
+## What this build does
 - Adds a menu bar item labeled `Ctx`.
-- Requests Accessibility + Screen Recording permissions on launch.
-- Captures context from the frontmost app when you click `Capture Context`.
-- Stores a single latest context locally.
-- Copies the latest captured context to clipboard with `Copy Last Context`.
+- Enforces onboarding before capture:
+  - Accessibility permission.
+  - Screen Recording permission.
+  - Provider setup (OpenAI, Anthropic, Google) + API key.
+- Captures full frontmost app context (AX + screenshot/OCR fallback).
+- Densifies each capture through the selected provider using your API key.
+- Appends captures as ordered pieces to one selected current context.
+- Supports:
+  - Create/select current context.
+  - Undo last capture in current context.
+  - Promote last capture into a new context.
+  - Copy current context in dense or raw mode.
 
 ## Run
 ```bash
@@ -15,10 +23,14 @@ swift run ContextGeneratorDemo
 ```
 
 ## Saved files
-The latest capture is saved at:
-- `~/Library/Application Support/ContextGeneratorDemo/latest-context.json`
-- `~/Library/Application Support/ContextGeneratorDemo/latest-context.txt`
-- `~/Library/Application Support/ContextGeneratorDemo/latest-screenshot.png` (when screenshot capture succeeds)
+Data is stored at:
+- `~/Library/Application Support/ContextGenerator/store.json`
+- `~/Library/Application Support/ContextGenerator/artifacts/*.png`
+
+## Tests
+```bash
+swift test
+```
 
 ## Notes on reliability
 - The app uses Accessibility extraction first and OCR from screenshot as fallback/supplement.

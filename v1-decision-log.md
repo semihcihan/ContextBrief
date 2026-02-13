@@ -41,17 +41,17 @@
 - **Why:** Accessibility gives cleaner text when available; screenshot broadens coverage.
 - **Implications:** Need robust fallback orchestration and confidence tracking by method.
 
-### D-007: Automatic Linking Is Required in V1
+### D-007: Context Session Model (No Inter-Context Linking)
 - **Status:** Accepted
-- **Decision:** Auto-linking cannot be optional/manual-only in V1.
-- **Why:** Manual curation alone is not acceptable for desired user experience.
-- **Implications:** Must ship reliable enrichment/linking flow in initial version, not as later add-on.
+- **Decision:** V1 does not link contexts to each other; users capture into one selected current context.
+- **Why:** Simpler and more predictable behavior for early production release.
+- **Implications:** V1 must ship strong context session commands (new context, switch current, undo last capture, promote last capture to new context).
 
-### D-008: LLM Processing Uses User API Keys
+### D-008: LLM Processing Uses User API Keys for Densification
 - **Status:** Accepted
-- **Decision:** Summarization, categorization, and linking use user-provided provider keys.
-- **Why:** Enables immediate customization and avoids hosted-inference complexity in V1.
-- **Implications:** Need secure key storage (Keychain), provider configuration UX, and failure handling.
+- **Decision:** Capture densification (noise reduction + concise wording without losing meaningful information) uses user-provided provider keys.
+- **Why:** Keeps local-first architecture while improving signal quality of captured context.
+- **Implications:** Need secure key storage (Keychain), provider configuration UX, prompt contracts, and failure handling.
 
 ### D-009: Supported Providers in V1
 - **Status:** Accepted
@@ -59,9 +59,15 @@
 - **Why:** Keeps integration scope focused while covering major provider choices.
 - **Implications:** Provider abstraction should be extensible but only three adapters are required now.
 
+### D-010: Current Context Can Be Switched to Historical Contexts
+- **Status:** Accepted
+- **Decision:** Users can select an older context as current and continue appending capture pieces.
+- **Why:** Preserves the ability to continue ongoing workstreams without linking systems.
+- **Implications:** Repository must support current-context state and piece ordering per context.
+
 ## Deferred Decisions
 
-### D-010: Hosted Backend / Sync
+### D-011: Hosted Backend / Sync
 - **Status:** Deferred
 - **Decision:** No hosted sync/storage features in V1.
 - **Why:** Out of scope for local-first launch.
@@ -69,22 +75,22 @@
 
 ## Open Decisions
 
-### D-011: Browser Fidelity Strategy
+### D-012: Browser Fidelity Strategy
 - **Status:** Open
 - **Decision Needed:** Whether to add browser extension support after V1 for higher-fidelity extraction.
 - **Options:** Screen/AX only vs extension-assisted extraction.
 
-### D-012: Similarity Retrieval Implementation
+### D-013: Default Global Shortcut
 - **Status:** Open
-- **Decision Needed:** How to rank candidate links before LLM verification.
-- **Options:** Provider embeddings vs lightweight local embeddings.
+- **Decision Needed:** What default capture shortcut should be assigned.
+- **Options:** User-defined on first run vs predefined default with override.
 
-### D-013: Context Retention Policy
+### D-014: Context Retention Policy
 - **Status:** Open
 - **Decision Needed:** Default retention/deletion behavior for local context data.
 - **Options:** Indefinite retention vs configurable retention windows.
 
 ## Decision Impact Summary
-- V1 is explicitly optimized for **privacy + speed of capture + automatic organization**.
-- Engineering effort should prioritize **capture reliability** and **auto-link quality** over cloud features.
+- V1 is explicitly optimized for **privacy + speed of capture + deterministic session workflow**.
+- Engineering effort should prioritize **capture reliability** and **densification quality** over cloud features.
 - Product risk concentrates around cross-app extraction quality and provider latency; these should be tracked as top launch risks.
