@@ -5,7 +5,7 @@ import Foundation
 import Vision
 
 public protocol ContextCapturing {
-    func capture() throws -> (CapturedContext, Data?)
+    func capture() throws -> (CapturedSnapshot, Data?)
 }
 
 public final class ContextCaptureService: ContextCapturing {
@@ -64,7 +64,7 @@ public final class ContextCaptureService: ContextCapturing {
 
     public init() {}
 
-    public func capture() throws -> (CapturedContext, Data?) {
+    public func capture() throws -> (CapturedSnapshot, Data?) {
         let startTime = CFAbsoluteTimeGetCurrent()
         guard let frontmostApp = NSWorkspace.shared.frontmostApplication else {
             throw AppError.noFrontmostApp
@@ -128,7 +128,7 @@ public final class ContextCaptureService: ContextCapturing {
         let pngData = screenshot.flatMap { NSBitmapImageRep(cgImage: $0).representation(using: .png, properties: [:]) }
 
         return (
-            CapturedContext(
+            CapturedSnapshot(
                 sourceType: sourceType,
                 appName: appName,
                 bundleIdentifier: bundleIdentifier,

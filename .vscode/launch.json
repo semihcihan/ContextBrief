@@ -1,0 +1,24 @@
+{
+  "configurations": [
+    {
+      "type": "swift",
+      "request": "launch",
+      "args": [],
+      "cwd": "${workspaceFolder:context-generator}",
+      "name": "Debug ContextGeneratorApp",
+      "target": "ContextGeneratorApp",
+      "configuration": "debug",
+      "preLaunchTask": "swift: Build Debug ContextGeneratorApp"
+    },
+    {
+      "type": "swift",
+      "request": "launch",
+      "args": [],
+      "cwd": "${workspaceFolder:context-generator}",
+      "name": "Release ContextGeneratorApp",
+      "target": "ContextGeneratorApp",
+      "configuration": "release",
+      "preLaunchTask": "swift: Build Release ContextGeneratorApp"
+    }
+  ]
+}

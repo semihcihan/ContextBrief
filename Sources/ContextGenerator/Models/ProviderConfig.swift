@@ -3,7 +3,7 @@ import Foundation
 public enum ProviderName: String, Codable, CaseIterable {
     case openai
     case anthropic
-    case google
+    case gemini
 }
 
 public struct ProviderConfig: Codable, Equatable {

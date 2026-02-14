@@ -2,9 +2,9 @@ import ContextGenerator
 import XCTest
 
 private final class MockCaptureService: ContextCapturing {
-    func capture() throws -> (CapturedContext, Data?) {
+    func capture() throws -> (CapturedSnapshot, Data?) {
         (
-            CapturedContext(
+            CapturedSnapshot(
                 sourceType: .desktopApp,
                 appName: "Terminal",
                 bundleIdentifier: "com.apple.Terminal",
@@ -26,7 +26,7 @@ private final class MockCaptureService: ContextCapturing {
 }
 
 private final class MockDensifier: Densifying {
-    func densify(capture: CapturedContext, provider: ProviderName, model: String, apiKey: String) async throws -> String {
+    func densify(snapshot: CapturedSnapshot, provider: ProviderName, model: String, apiKey: String) async throws -> String {
         "dense-output"
     }
 }
@@ -47,7 +47,7 @@ private final class MockKeychain: KeychainServicing {
 }
 
 final class CaptureWorkflowTests: XCTestCase {
-    func testWorkflowAppendsDensePiece() async throws {
+    func testWorkflowAppendsDenseSnapshot() async throws {
         let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let repo = ContextRepository(rootURL: tempRoot)
         let manager = ContextSessionManager(repository: repo)
@@ -69,7 +69,7 @@ final class CaptureWorkflowTests: XCTestCase {
 
         _ = try manager.createNewContext(title: "Current")
         let result = try await workflow.runCapture()
-        XCTAssertEqual(result.piece.denseContent, "dense-output")
-        XCTAssertEqual(try repo.pieces(in: result.context.id).count, 1)
+        XCTAssertEqual(result.snapshot.denseContent, "dense-output")
+        XCTAssertEqual(try repo.snapshots(in: result.context.id).count, 1)
     }
 }

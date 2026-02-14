@@ -9,20 +9,21 @@ public protocol ContextRepositorying {
     func createContext(title: String) throws -> Context
     func updateContext(_ context: Context) throws
 
-    func pieces(in contextId: UUID) throws -> [CapturePiece]
-    func appendPiece(_ piece: CapturePiece) throws
-    func removeLastPiece(in contextId: UUID) throws -> CapturePiece?
-    func lastPiece(in contextId: UUID) throws -> CapturePiece?
-    func removePiece(id: UUID) throws
+    func snapshots(in contextId: UUID) throws -> [Snapshot]
+    func appendSnapshot(_ snapshot: Snapshot) throws
+    func updateSnapshot(_ snapshot: Snapshot) throws
+    func removeLastSnapshot(in contextId: UUID) throws -> Snapshot?
+    func lastSnapshot(in contextId: UUID) throws -> Snapshot?
+    func removeSnapshot(id: UUID) throws
 
-    func saveScreenshotData(_ data: Data, pieceId: UUID) throws
-    func screenshotData(pieceId: UUID) throws -> Data?
+    func saveScreenshotData(_ data: Data, snapshotId: UUID) throws
+    func screenshotData(snapshotId: UUID) throws -> Data?
 }
 
 private struct PersistedStore: Codable {
     var appState: AppState
     var contexts: [Context]
-    var pieces: [CapturePiece]
+    var snapshots: [Snapshot]
 }
 
 public final class ContextRepository: ContextRepositorying {
@@ -92,77 +93,89 @@ public final class ContextRepository: ContextRepositorying {
         }
     }
 
-    public func pieces(in contextId: UUID) throws -> [CapturePiece] {
+    public func snapshots(in contextId: UUID) throws -> [Snapshot] {
         try readStore()
-            .pieces
+            .snapshots
             .filter { $0.contextId == contextId }
             .sorted { $0.sequence < $1.sequence }
     }
 
-    public func appendPiece(_ piece: CapturePiece) throws {
+    public func appendSnapshot(_ snapshot: Snapshot) throws {
         try mutateStore {
-            $0.pieces.append(piece)
-            if let contextIndex = $0.contexts.firstIndex(where: { $0.id == piece.contextId }) {
-                $0.contexts[contextIndex].pieceCount += 1
+            $0.snapshots.append(snapshot)
+            if let contextIndex = $0.contexts.firstIndex(where: { $0.id == snapshot.contextId }) {
+                $0.contexts[contextIndex].snapshotCount += 1
                 $0.contexts[contextIndex].updatedAt = Date()
             }
         }
     }
 
-    public func removeLastPiece(in contextId: UUID) throws -> CapturePiece? {
-        var removed: CapturePiece?
+    public func updateSnapshot(_ snapshot: Snapshot) throws {
         try mutateStore {
-            let contextPieces =
-                $0.pieces
+            guard let index = $0.snapshots.firstIndex(where: { $0.id == snapshot.id }) else {
+                return
+            }
+            $0.snapshots[index] = snapshot
+            if let contextIndex = $0.contexts.firstIndex(where: { $0.id == snapshot.contextId }) {
+                $0.contexts[contextIndex].updatedAt = Date()
+            }
+        }
+    }
+
+    public func removeLastSnapshot(in contextId: UUID) throws -> Snapshot? {
+        var removed: Snapshot?
+        try mutateStore {
+            let contextSnapshots =
+                $0.snapshots
                 .enumerated()
                 .filter { $0.element.contextId == contextId }
                 .sorted(by: { $0.element.sequence > $1.element.sequence })
-            guard let last = contextPieces.first else {
+            guard let last = contextSnapshots.first else {
                 return
             }
 
-            removed = $0.pieces.remove(at: last.offset)
+            removed = $0.snapshots.remove(at: last.offset)
             if let contextIndex = $0.contexts.firstIndex(where: { $0.id == contextId }) {
-                $0.contexts[contextIndex].pieceCount = max(0, $0.contexts[contextIndex].pieceCount - 1)
+                $0.contexts[contextIndex].snapshotCount = max(0, $0.contexts[contextIndex].snapshotCount - 1)
                 $0.contexts[contextIndex].updatedAt = Date()
             }
         }
         return removed
     }
 
-    public func lastPiece(in contextId: UUID) throws -> CapturePiece? {
-        try pieces(in: contextId).last
+    public func lastSnapshot(in contextId: UUID) throws -> Snapshot? {
+        try snapshots(in: contextId).last
     }
 
-    public func removePiece(id: UUID) throws {
+    public func removeSnapshot(id: UUID) throws {
         try mutateStore {
-            guard let index = $0.pieces.firstIndex(where: { $0.id == id }) else {
+            guard let index = $0.snapshots.firstIndex(where: { $0.id == id }) else {
                 return
             }
 
-            let removed = $0.pieces.remove(at: index)
+            let removed = $0.snapshots.remove(at: index)
             if let contextIndex = $0.contexts.firstIndex(where: { $0.id == removed.contextId }) {
-                $0.contexts[contextIndex].pieceCount = max(0, $0.contexts[contextIndex].pieceCount - 1)
+                $0.contexts[contextIndex].snapshotCount = max(0, $0.contexts[contextIndex].snapshotCount - 1)
                 $0.contexts[contextIndex].updatedAt = Date()
             }
         }
     }
 
-    public func saveScreenshotData(_ data: Data, pieceId: UUID) throws {
+    public func saveScreenshotData(_ data: Data, snapshotId: UUID) throws {
         try FileManager.default.createDirectory(at: artifactsURL, withIntermediateDirectories: true)
-        try data.write(to: screenshotURL(pieceId: pieceId), options: .atomic)
+        try data.write(to: screenshotURL(snapshotId: snapshotId), options: .atomic)
     }
 
-    public func screenshotData(pieceId: UUID) throws -> Data? {
-        let url = screenshotURL(pieceId: pieceId)
+    public func screenshotData(snapshotId: UUID) throws -> Data? {
+        let url = screenshotURL(snapshotId: snapshotId)
         guard FileManager.default.fileExists(atPath: url.path) else {
             return nil
         }
         return try Data(contentsOf: url)
     }
 
-    private func screenshotURL(pieceId: UUID) -> URL {
-        artifactsURL.appendingPathComponent("\(pieceId.uuidString).png")
+    private func screenshotURL(snapshotId: UUID) -> URL {
+        artifactsURL.appendingPathComponent("\(snapshotId.uuidString).png")
     }
 
     private func readStore() throws -> PersistedStore {
@@ -187,7 +200,7 @@ public final class ContextRepository: ContextRepositorying {
 
     private func loadStore() throws -> PersistedStore {
         if !FileManager.default.fileExists(atPath: storeURL.path) {
-            let initialStore = PersistedStore(appState: AppState(), contexts: [], pieces: [])
+            let initialStore = PersistedStore(appState: AppState(), contexts: [], snapshots: [])
             try saveStore(initialStore)
             return initialStore
         }

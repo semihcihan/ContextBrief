@@ -35,17 +35,34 @@ public final class ContextSessionManager {
         return try createNewContext()
     }
 
-    public func appendCapturePiece(
-        rawCapture: CapturedContext,
+    public func currentContextIfExists() throws -> Context? {
+        let state = try repository.appState()
+        guard let contextId = state.currentContextId else {
+            return nil
+        }
+        return try repository.context(id: contextId)
+    }
+
+    public func snapshotsInCurrentContext() throws -> [Snapshot] {
+        try repository.snapshots(in: currentContext().id)
+    }
+
+    public func hasLastSnapshotInCurrentContext() throws -> Bool {
+        try repository.lastSnapshot(in: currentContext().id) != nil
+    }
+
+    public func appendSnapshot(
+        rawCapture: CapturedSnapshot,
         denseContent: String,
         provider: ProviderName?,
         model: String?
-    ) throws -> CapturePiece {
+    ) throws -> Snapshot {
         let context = try currentContext()
-        let sequence = (try repository.lastPiece(in: context.id)?.sequence ?? 0) + 1
-        let piece = CapturePiece(
+        let sequence = (try repository.lastSnapshot(in: context.id)?.sequence ?? 0) + 1
+        let snapshot = Snapshot(
             contextId: context.id,
             sequence: sequence,
+            title: "Snapshot \(sequence)",
             sourceType: rawCapture.sourceType,
             appName: rawCapture.appName,
             bundleIdentifier: rawCapture.bundleIdentifier,
@@ -60,13 +77,13 @@ public final class ContextSessionManager {
             ocrLineCount: rawCapture.diagnostics.ocrLineCount,
             processingDurationMs: rawCapture.diagnostics.processingDurationMs
         )
-        try repository.appendPiece(piece)
-        return piece
+        try repository.appendSnapshot(snapshot)
+        return snapshot
     }
 
-    public func undoLastCaptureInCurrentContext() throws -> CapturePiece {
+    public func undoLastCaptureInCurrentContext() throws -> Snapshot {
         let context = try currentContext()
-        guard let removed = try repository.removeLastPiece(in: context.id) else {
+        guard let removed = try repository.removeLastSnapshot(in: context.id) else {
             throw AppError.noCaptureToUndo
         }
         return removed
@@ -75,14 +92,15 @@ public final class ContextSessionManager {
     @discardableResult
     public func promoteLastCaptureToNewContext(title: String? = nil) throws -> Context {
         let context = try currentContext()
-        guard let last = try repository.removeLastPiece(in: context.id) else {
+        guard let last = try repository.removeLastSnapshot(in: context.id) else {
             throw AppError.noCaptureToPromote
         }
 
         let newContext = try createNewContext(title: title)
-        let promotedPiece = CapturePiece(
+        let promotedSnapshot = Snapshot(
             contextId: newContext.id,
             sequence: 1,
+            title: last.title,
             sourceType: last.sourceType,
             appName: last.appName,
             bundleIdentifier: last.bundleIdentifier,
@@ -94,7 +112,22 @@ public final class ContextSessionManager {
             provider: last.provider,
             model: last.model
         )
-        try repository.appendPiece(promotedPiece)
+        try repository.appendSnapshot(promotedSnapshot)
         return newContext
+    }
+
+    public func renameCurrentContext(_ title: String) throws {
+        var context = try currentContext()
+        context.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        context.updatedAt = Date()
+        try repository.updateContext(context)
+    }
+
+    public func renameSnapshot(_ snapshotId: UUID, title: String) throws {
+        guard var snapshot = try snapshotsInCurrentContext().first(where: { $0.id == snapshotId }) else {
+            throw AppError.snapshotNotFound
+        }
+        snapshot.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        try repository.updateSnapshot(snapshot)
     }
 }

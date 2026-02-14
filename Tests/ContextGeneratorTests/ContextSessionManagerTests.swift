@@ -20,7 +20,7 @@ final class ContextSessionManagerTests: XCTestCase {
         let manager = ContextSessionManager(repository: repo)
         _ = try manager.createNewContext(title: "Context")
 
-        let capture = CapturedContext(
+        let capture = CapturedSnapshot(
             sourceType: .desktopApp,
             appName: "Notes",
             bundleIdentifier: "com.apple.Notes",
@@ -36,7 +36,7 @@ final class ContextSessionManagerTests: XCTestCase {
                 usedFallbackOCR: false
             )
         )
-        _ = try manager.appendCapturePiece(rawCapture: capture, denseContent: "abc", provider: nil, model: nil)
+        _ = try manager.appendSnapshot(rawCapture: capture, denseContent: "abc", provider: nil, model: nil)
         let removed = try manager.undoLastCaptureInCurrentContext()
         XCTAssertEqual(removed.sequence, 1)
     }
@@ -47,7 +47,7 @@ final class ContextSessionManagerTests: XCTestCase {
         let manager = ContextSessionManager(repository: repo)
         let first = try manager.createNewContext(title: "First")
 
-        let capture = CapturedContext(
+        let capture = CapturedSnapshot(
             sourceType: .desktopApp,
             appName: "Notes",
             bundleIdentifier: "com.apple.Notes",
@@ -63,11 +63,11 @@ final class ContextSessionManagerTests: XCTestCase {
                 usedFallbackOCR: false
             )
         )
-        _ = try manager.appendCapturePiece(rawCapture: capture, denseContent: "dense", provider: nil, model: nil)
+        _ = try manager.appendSnapshot(rawCapture: capture, denseContent: "dense", provider: nil, model: nil)
 
         let second = try manager.promoteLastCaptureToNewContext(title: "Second")
         XCTAssertNotEqual(first.id, second.id)
-        XCTAssertEqual(try repo.pieces(in: first.id).count, 0)
-        XCTAssertEqual(try repo.pieces(in: second.id).count, 1)
+        XCTAssertEqual(try repo.snapshots(in: first.id).count, 0)
+        XCTAssertEqual(try repo.snapshots(in: second.id).count, 1)
     }
 }

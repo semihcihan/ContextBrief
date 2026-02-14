@@ -2,7 +2,7 @@ import Foundation
 
 public protocol Densifying {
     func densify(
-        capture: CapturedContext,
+        snapshot: CapturedSnapshot,
         provider: ProviderName,
         model: String,
         apiKey: String
@@ -17,16 +17,16 @@ public final class DensificationService: Densifying {
     }
 
     public func densify(
-        capture: CapturedContext,
+        snapshot: CapturedSnapshot,
         provider: ProviderName,
         model: String,
         apiKey: String
     ) async throws -> String {
         let client = ProviderClientFactory.make(provider: provider, session: session)
         let request = DensificationRequest(
-            inputText: capture.combinedText,
-            appName: capture.appName,
-            windowTitle: capture.windowTitle
+            inputText: snapshot.combinedText,
+            appName: snapshot.appName,
+            windowTitle: snapshot.windowTitle
         )
 
         let output = try await client.densify(
@@ -34,6 +34,6 @@ public final class DensificationService: Densifying {
             apiKey: apiKey,
             model: model
         )
-        return output.isEmpty ? capture.combinedText : output
+        return output.isEmpty ? snapshot.combinedText : output
     }
 }

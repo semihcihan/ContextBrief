@@ -2,8 +2,8 @@ import Foundation
 
 public struct CaptureWorkflowResult {
     public let context: Context
-    public let piece: CapturePiece
-    public let capturedContext: CapturedContext
+    public let snapshot: Snapshot
+    public let capturedSnapshot: CapturedSnapshot
 }
 
 public final class CaptureWorkflow {
@@ -28,7 +28,7 @@ public final class CaptureWorkflow {
     }
 
     public func runCapture() async throws -> CaptureWorkflowResult {
-        let (capturedContext, screenshotData) = try captureService.capture()
+        let (capturedSnapshot, screenshotData) = try captureService.capture()
         let state = try repository.appState()
         guard let provider = state.selectedProvider, let model = state.selectedModel else {
             throw AppError.providerNotConfigured
@@ -39,27 +39,27 @@ public final class CaptureWorkflow {
         }
 
         let dense = try await densificationService.densify(
-            capture: capturedContext,
+            snapshot: capturedSnapshot,
             provider: provider,
             model: model,
             apiKey: key
         )
-        let piece = try sessionManager.appendCapturePiece(
-            rawCapture: capturedContext,
+        let snapshot = try sessionManager.appendSnapshot(
+            rawCapture: capturedSnapshot,
             denseContent: dense,
             provider: provider,
             model: model
         )
 
         if let screenshotData {
-            try repository.saveScreenshotData(screenshotData, pieceId: piece.id)
+            try repository.saveScreenshotData(screenshotData, snapshotId: snapshot.id)
         }
 
         let context = try sessionManager.currentContext()
         return CaptureWorkflowResult(
             context: context,
-            piece: piece,
-            capturedContext: capturedContext
+            snapshot: snapshot,
+            capturedSnapshot: capturedSnapshot
         )
     }
 }
