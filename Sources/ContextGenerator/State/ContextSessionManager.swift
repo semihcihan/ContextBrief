@@ -83,7 +83,7 @@ public final class ContextSessionManager {
 
     public func undoLastCaptureInCurrentContext() throws -> Snapshot {
         let context = try currentContext()
-        guard let removed = try repository.removeLastSnapshot(in: context.id) else {
+        guard let removed = try repository.moveLastSnapshotToTrash(in: context.id)?.snapshot else {
             throw AppError.noCaptureToUndo
         }
         return removed
@@ -129,5 +129,51 @@ public final class ContextSessionManager {
         }
         snapshot.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
         try repository.updateSnapshot(snapshot)
+    }
+
+    @discardableResult
+    public func deleteContextToTrash(_ contextId: UUID) throws -> Int {
+        let removed = try repository.moveContextSnapshotsToTrash(contextId: contextId)
+        return removed.count
+    }
+
+    @discardableResult
+    public func deleteSnapshotToTrash(_ snapshotId: UUID) throws -> Snapshot {
+        guard let trashed = try repository.moveSnapshotToTrash(id: snapshotId) else {
+            throw AppError.snapshotNotFound
+        }
+        return trashed.snapshot
+    }
+
+    public func trashedSnapshots() throws -> [TrashedSnapshot] {
+        try repository.trashSnapshots()
+    }
+
+    public func trashedContexts() throws -> [TrashedContext] {
+        try repository.trashedContexts()
+    }
+
+    @discardableResult
+    public func restoreTrashedSnapshotToCurrentContext(_ trashedSnapshotId: UUID) throws -> Snapshot {
+        let context = try currentContext()
+        return try repository.restoreTrashedSnapshot(id: trashedSnapshotId, to: context.id)
+    }
+
+    @discardableResult
+    public func moveSnapshotToCurrentContext(_ snapshotId: UUID) throws -> Snapshot {
+        let context = try currentContext()
+        guard let moved = try repository.moveSnapshot(id: snapshotId, to: context.id) else {
+            throw AppError.snapshotNotFound
+        }
+        return moved
+    }
+
+    @discardableResult
+    public func restoreTrashedContext(_ trashedContextId: UUID, setAsCurrent: Bool = false) throws -> Context {
+        let restored = try repository.restoreTrashedContext(id: trashedContextId)
+        if setAsCurrent {
+            try setCurrentContext(restored.id)
+        }
+        return restored
     }
 }
