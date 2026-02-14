@@ -5,6 +5,6 @@ final class DensificationServiceTests: XCTestCase {
     func testProviderFactoryReturnsClient() {
         XCTAssertNotNil(ProviderClientFactory.make(provider: .openai))
         XCTAssertNotNil(ProviderClientFactory.make(provider: .anthropic))
-        XCTAssertNotNil(ProviderClientFactory.make(provider: .google))
+        XCTAssertNotNil(ProviderClientFactory.make(provider: .gemini))
     }
 }

@@ -10,6 +10,9 @@ final class OnboardingWindowController: NSWindowController {
     private let modelField = NSTextField(string: "gpt-4.1-mini")
     private let keyField = NSSecureTextField(frame: .zero)
     private let infoLabel = NSTextField(labelWithString: "")
+    private let requestPermissionsButton = NSButton(title: "Request Permissions", target: nil, action: nil)
+    private let finishSetupButton = NSButton(title: "Finish Setup", target: nil, action: nil)
+    private var setupValidationInProgress = false
 
     init(
         permissionService: PermissionServicing,
@@ -32,6 +35,11 @@ final class OnboardingWindowController: NSWindowController {
         setupUI()
     }
 
+    override func showWindow(_ sender: Any?) {
+        super.showWindow(sender)
+        presentWindowAsFrontmost(sender)
+    }
+
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
@@ -44,26 +52,46 @@ final class OnboardingWindowController: NSWindowController {
 
         let stack = NSStackView()
         stack.orientation = .vertical
-        stack.spacing = 10
+        stack.spacing = 8
         stack.edgeInsets = NSEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
         stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.alignment = .centerX
 
         let title = NSTextField(labelWithString: "Grant permissions and configure model access.")
         title.font = .systemFont(ofSize: 14, weight: .medium)
+        title.alignment = .center
         stack.addArrangedSubview(title)
 
-        providerPopup.addItems(withTitles: ProviderName.allCases.map(\.rawValue))
-        stack.addArrangedSubview(labeledRow(label: "Provider", view: providerPopup))
-        stack.addArrangedSubview(labeledRow(label: "Model", view: modelField))
-        stack.addArrangedSubview(labeledRow(label: "API Key", view: keyField))
+        providerPopup.removeAllItems()
+        for provider in ProviderName.allCases {
+            providerPopup.addItem(withTitle: provider.displayName)
+            providerPopup.lastItem?.representedObject = provider.rawValue
+        }
+        providerPopup.selectItem(at: 0)
 
-        let requestPermissionsButton = NSButton(title: "Request Permissions", target: self, action: #selector(requestPermissions))
-        stack.addArrangedSubview(requestPermissionsButton)
+        let fieldColumn = NSStackView()
+        fieldColumn.orientation = .vertical
+        fieldColumn.spacing = 8
+        fieldColumn.translatesAutoresizingMaskIntoConstraints = false
+        fieldColumn.addArrangedSubview(labeledRow(label: "Provider", view: providerPopup))
+        fieldColumn.addArrangedSubview(labeledRow(label: "Model", view: modelField))
+        fieldColumn.addArrangedSubview(labeledRow(label: "API Key", view: keyField))
+        stack.addArrangedSubview(fieldColumn)
+        stack.setCustomSpacing(12, after: fieldColumn)
 
-        let completeButton = NSButton(title: "Finish Setup", target: self, action: #selector(finishSetup))
-        stack.addArrangedSubview(completeButton)
+        requestPermissionsButton.target = self
+        requestPermissionsButton.action = #selector(requestPermissions)
+        finishSetupButton.target = self
+        finishSetupButton.action = #selector(finishSetup)
+        let buttonColumn = NSStackView(views: [requestPermissionsButton, finishSetupButton])
+        buttonColumn.orientation = .vertical
+        buttonColumn.spacing = 6
+        buttonColumn.translatesAutoresizingMaskIntoConstraints = false
+        stack.addArrangedSubview(buttonColumn)
+        stack.setCustomSpacing(12, after: buttonColumn)
 
         infoLabel.stringValue = "Accessibility + Screen Recording are required."
+        infoLabel.alignment = .center
         stack.addArrangedSubview(infoLabel)
 
         contentView.addSubview(stack)
@@ -71,20 +99,32 @@ final class OnboardingWindowController: NSWindowController {
             stack.topAnchor.constraint(equalTo: contentView.topAnchor),
             stack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
             stack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor)
+            stack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            fieldColumn.widthAnchor.constraint(equalToConstant: 420),
+            buttonColumn.widthAnchor.constraint(equalToConstant: 210),
+            requestPermissionsButton.widthAnchor.constraint(equalTo: finishSetupButton.widthAnchor),
+            requestPermissionsButton.heightAnchor.constraint(equalToConstant: 30),
+            finishSetupButton.heightAnchor.constraint(equalTo: requestPermissionsButton.heightAnchor)
         ])
     }
 
     private func labeledRow(label: String, view: NSView) -> NSView {
         let row = NSStackView()
         row.orientation = .horizontal
-        row.spacing = 8
+        row.spacing = 10
+        row.alignment = .centerY
+        row.distribution = .fill
+        row.translatesAutoresizingMaskIntoConstraints = false
         let text = NSTextField(labelWithString: "\(label):")
-        text.frame.size.width = 110
         text.alignment = .right
+        text.translatesAutoresizingMaskIntoConstraints = false
         view.translatesAutoresizingMaskIntoConstraints = false
         row.addArrangedSubview(text)
         row.addArrangedSubview(view)
+        NSLayoutConstraint.activate([
+            text.widthAnchor.constraint(equalToConstant: 95),
+            view.heightAnchor.constraint(equalToConstant: 26)
+        ])
         return row
     }
 
@@ -97,6 +137,9 @@ final class OnboardingWindowController: NSWindowController {
     }
 
     @objc private func finishSetup() {
+        guard !setupValidationInProgress else {
+            return
+        }
         guard
             permissionService.hasAccessibilityPermission(),
             permissionService.hasScreenRecordingPermission()
@@ -105,7 +148,10 @@ final class OnboardingWindowController: NSWindowController {
             return
         }
 
-        guard let provider = ProviderName(rawValue: providerPopup.titleOfSelectedItem ?? "") else {
+        guard
+            let selectedProviderRawValue = providerPopup.selectedItem?.representedObject as? String,
+            let provider = ProviderName(rawValue: selectedProviderRawValue)
+        else {
             infoLabel.stringValue = "Select a provider."
             return
         }
@@ -117,13 +163,66 @@ final class OnboardingWindowController: NSWindowController {
             return
         }
 
-        do {
-            try appStateService.configureProvider(provider: provider, model: model, apiKey: apiKey)
-            try appStateService.markOnboardingCompleted()
-            close()
-            onComplete()
-        } catch {
-            infoLabel.stringValue = "Setup failed: \(error.localizedDescription)"
+        setSetupControlsEnabled(false)
+        infoLabel.stringValue = "Validating model access..."
+        setupValidationInProgress = true
+
+        Task { [weak self] in
+            guard let self else {
+                return
+            }
+            do {
+                try await self.validateProvider(provider: provider, model: model, apiKey: apiKey)
+                try self.appStateService.configureProvider(provider: provider, model: model, apiKey: apiKey)
+                try self.appStateService.markOnboardingCompleted()
+                await MainActor.run {
+                    self.setupValidationInProgress = false
+                    self.setSetupControlsEnabled(true)
+                    self.close()
+                    self.onComplete()
+                }
+            } catch {
+                await MainActor.run {
+                    self.setupValidationInProgress = false
+                    self.setSetupControlsEnabled(true)
+                    self.infoLabel.stringValue = "Setup failed: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    private func setSetupControlsEnabled(_ enabled: Bool) {
+        providerPopup.isEnabled = enabled
+        modelField.isEnabled = enabled
+        keyField.isEnabled = enabled
+        requestPermissionsButton.isEnabled = enabled
+        finishSetupButton.isEnabled = enabled
+    }
+
+    private func validateProvider(provider: ProviderName, model: String, apiKey: String) async throws {
+        let client = ProviderClientFactory.make(provider: provider)
+        let request = DensificationRequest(
+            inputText: "Health check. Reply with OK.",
+            appName: "Context Generator",
+            windowTitle: "Setup Validation"
+        )
+        _ = try await client.densify(
+            request: request,
+            apiKey: apiKey,
+            model: model
+        )
+    }
+}
+
+private extension ProviderName {
+    var displayName: String {
+        switch self {
+        case .openai:
+            return "OpenAI"
+        case .anthropic:
+            return "Anthropic"
+        case .gemini:
+            return "Gemini"
         }
     }
 }

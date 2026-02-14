@@ -24,10 +24,49 @@ public enum ProviderClientFactory {
             return OpenAIProviderClient(session: session)
         case .anthropic:
             return AnthropicProviderClient(session: session)
-        case .google:
-            return GoogleProviderClient(session: session)
+        case .gemini:
+            return GeminiProviderClient(session: session)
         }
     }
+}
+
+private func providerRequestErrorMessage(from data: Data, fallback: String) -> String {
+    guard
+        let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    else {
+        return fallback
+    }
+    if let error = json["error"] as? [String: Any] {
+        if let message = error["message"] as? String, !message.isEmpty {
+            return message
+        }
+        if let details = error["details"] as? [[String: Any]],
+           let detailMessage = details.first?["message"] as? String,
+           !detailMessage.isEmpty
+        {
+            return detailMessage
+        }
+    }
+    if let message = json["message"] as? String, !message.isEmpty {
+        return message
+    }
+    return fallback
+}
+
+private func validatedResponseData(
+    _ data: Data,
+    _ response: URLResponse,
+    providerName: String
+) throws -> Data {
+    guard let httpResponse = response as? HTTPURLResponse else {
+        throw AppError.providerRequestFailed("Unexpected response from \(providerName) API.")
+    }
+    guard (200 ... 299).contains(httpResponse.statusCode) else {
+        let fallback = "Request to \(providerName) failed with status \(httpResponse.statusCode)."
+        let details = providerRequestErrorMessage(from: data, fallback: fallback)
+        throw AppError.providerRequestFailed(details)
+    }
+    return data
 }
 
 private func densificationPrompt(for request: DensificationRequest) -> String {
@@ -64,12 +103,16 @@ private struct OpenAIProviderClient: ProviderClient {
         ]
         urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (data, _) = try await session.data(for: urlRequest)
-        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let (data, response) = try await session.data(for: urlRequest)
+        let validatedData = try validatedResponseData(data, response, providerName: "OpenAI")
+        let json = try JSONSerialization.jsonObject(with: validatedData) as? [String: Any]
         let choices = json?["choices"] as? [[String: Any]]
         let message = choices?.first?["message"] as? [String: Any]
         let content = message?["content"] as? String
-        return content?.trimmingCharacters(in: .whitespacesAndNewlines) ?? request.inputText
+        guard let text = content?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
+            throw AppError.providerRequestFailed("OpenAI returned an empty response. Check model and account status.")
+        }
+        return text
     }
 }
 
@@ -98,16 +141,20 @@ private struct AnthropicProviderClient: ProviderClient {
         ]
         urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (data, _) = try await session.data(for: urlRequest)
-        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let (data, response) = try await session.data(for: urlRequest)
+        let validatedData = try validatedResponseData(data, response, providerName: "Anthropic")
+        let json = try JSONSerialization.jsonObject(with: validatedData) as? [String: Any]
         let content = json?["content"] as? [[String: Any]]
         let text = content?.first?["text"] as? String
-        return text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? request.inputText
+        guard let normalized = text?.trimmingCharacters(in: .whitespacesAndNewlines), !normalized.isEmpty else {
+            throw AppError.providerRequestFailed("Anthropic returned an empty response. Check model and account status.")
+        }
+        return normalized
     }
 }
 
-private struct GoogleProviderClient: ProviderClient {
-    let provider: ProviderName = .google
+private struct GeminiProviderClient: ProviderClient {
+    let provider: ProviderName = .gemini
     let session: URLSession
 
     func densify(request: DensificationRequest, apiKey: String, model: String) async throws -> String {
@@ -130,12 +177,16 @@ private struct GoogleProviderClient: ProviderClient {
         ]
         urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (data, _) = try await session.data(for: urlRequest)
-        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let (data, response) = try await session.data(for: urlRequest)
+        let validatedData = try validatedResponseData(data, response, providerName: "Gemini")
+        let json = try JSONSerialization.jsonObject(with: validatedData) as? [String: Any]
         let candidates = json?["candidates"] as? [[String: Any]]
         let content = candidates?.first?["content"] as? [String: Any]
         let parts = content?["parts"] as? [[String: Any]]
         let text = parts?.first?["text"] as? String
-        return text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? request.inputText
+        guard let normalized = text?.trimmingCharacters(in: .whitespacesAndNewlines), !normalized.isEmpty else {
+            throw AppError.providerRequestFailed("Gemini returned an empty response. Check model and account status.")
+        }
+        return normalized
     }
 }

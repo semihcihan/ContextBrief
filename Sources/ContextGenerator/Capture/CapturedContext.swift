@@ -1,6 +1,6 @@
 import Foundation
 
-public struct CapturedContext: Codable, Equatable {
+public struct CapturedSnapshot: Codable, Equatable {
     public let id: UUID
     public let capturedAt: Date
     public let sourceType: SourceType

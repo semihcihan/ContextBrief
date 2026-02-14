@@ -127,7 +127,7 @@ Users collect relevant information across many surfaces (desktop apps, browser t
   - `rawContent`, `ocrContent`, `denseContent`
   - `provider`, `model`
 - **ProviderConfig**
-  - `provider` (`openai` | `anthropic` | `google`)
+  - `provider` (`openai` | `anthropic` | `gemini`)
   - `keychainReference`
   - `defaultModel`
 

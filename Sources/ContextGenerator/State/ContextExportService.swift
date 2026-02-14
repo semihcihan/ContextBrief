@@ -18,19 +18,19 @@ public final class ContextExportService {
             throw AppError.contextNotFound
         }
 
-        let pieces = try repository.pieces(in: context.id)
-        let body = pieces.enumerated().map { index, piece in
+        let snapshots = try repository.snapshots(in: context.id)
+        let body = snapshots.enumerated().map { index, snapshot in
             switch mode {
             case .dense:
-                return "[\(index + 1)] \(piece.denseContent)"
+                return "[\(index + 1)] \(snapshot.denseContent)"
             case .raw:
-                return "[\(index + 1)] \(piece.rawContent)"
+                return "[\(index + 1)] \(snapshot.rawContent)"
             }
         }.joined(separator: "\n\n")
 
         return [
             "Context: \(context.title)",
-            "Pieces: \(pieces.count)",
+            "Snapshots: \(snapshots.count)",
             "",
             body
         ].joined(separator: "\n")

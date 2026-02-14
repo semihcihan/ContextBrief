@@ -5,19 +5,20 @@ public struct Context: Codable, Identifiable, Equatable {
     public var title: String
     public let createdAt: Date
     public var updatedAt: Date
-    public var pieceCount: Int
+    public var snapshotCount: Int
 
     public init(
         id: UUID = UUID(),
         title: String,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
-        pieceCount: Int = 0
+        snapshotCount: Int = 0
     ) {
         self.id = id
         self.title = title
         self.createdAt = createdAt
         self.updatedAt = updatedAt
-        self.pieceCount = pieceCount
+        self.snapshotCount = snapshotCount
     }
+
 }
