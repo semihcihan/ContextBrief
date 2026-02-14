@@ -8,6 +8,7 @@ public protocol ContextRepositorying {
     func context(id: UUID) throws -> Context?
     func createContext(title: String) throws -> Context
     func updateContext(_ context: Context) throws
+    func removeContext(id: UUID) throws
 
     func snapshots(in contextId: UUID) throws -> [Snapshot]
     func appendSnapshot(_ snapshot: Snapshot) throws
@@ -15,6 +16,14 @@ public protocol ContextRepositorying {
     func removeLastSnapshot(in contextId: UUID) throws -> Snapshot?
     func lastSnapshot(in contextId: UUID) throws -> Snapshot?
     func removeSnapshot(id: UUID) throws
+    func trashSnapshots() throws -> [TrashedSnapshot]
+    func moveLastSnapshotToTrash(in contextId: UUID) throws -> TrashedSnapshot?
+    func moveSnapshotToTrash(id: UUID) throws -> TrashedSnapshot?
+    func moveContextSnapshotsToTrash(contextId: UUID) throws -> [TrashedSnapshot]
+    func restoreTrashedSnapshot(id: UUID, to contextId: UUID) throws -> Snapshot
+    func moveSnapshot(id: UUID, to contextId: UUID) throws -> Snapshot?
+    func trashedContexts() throws -> [TrashedContext]
+    func restoreTrashedContext(id: UUID) throws -> Context
 
     func saveScreenshotData(_ data: Data, snapshotId: UUID) throws
     func screenshotData(snapshotId: UUID) throws -> Data?
@@ -24,6 +33,39 @@ private struct PersistedStore: Codable {
     var appState: AppState
     var contexts: [Context]
     var snapshots: [Snapshot]
+    var trashedSnapshots: [TrashedSnapshot]
+    var trashedContexts: [TrashedContext]
+
+    init(
+        appState: AppState,
+        contexts: [Context],
+        snapshots: [Snapshot],
+        trashedSnapshots: [TrashedSnapshot] = [],
+        trashedContexts: [TrashedContext] = []
+    ) {
+        self.appState = appState
+        self.contexts = contexts
+        self.snapshots = snapshots
+        self.trashedSnapshots = trashedSnapshots
+        self.trashedContexts = trashedContexts
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case appState
+        case contexts
+        case snapshots
+        case trashedSnapshots
+        case trashedContexts
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        appState = try container.decode(AppState.self, forKey: .appState)
+        contexts = try container.decode([Context].self, forKey: .contexts)
+        snapshots = try container.decode([Snapshot].self, forKey: .snapshots)
+        trashedSnapshots = try container.decodeIfPresent([TrashedSnapshot].self, forKey: .trashedSnapshots) ?? []
+        trashedContexts = try container.decodeIfPresent([TrashedContext].self, forKey: .trashedContexts) ?? []
+    }
 }
 
 public final class ContextRepository: ContextRepositorying {
@@ -90,6 +132,18 @@ public final class ContextRepository: ContextRepositorying {
                 return
             }
             $0.contexts[index] = context
+        }
+    }
+
+    public func removeContext(id: UUID) throws {
+        try mutateStore {
+            guard let contextIndex = $0.contexts.firstIndex(where: { $0.id == id }) else {
+                return
+            }
+            $0.contexts.remove(at: contextIndex)
+            if $0.appState.currentContextId == id {
+                $0.appState.currentContextId = nil
+            }
         }
     }
 
@@ -161,6 +215,233 @@ public final class ContextRepository: ContextRepositorying {
         }
     }
 
+    public func trashSnapshots() throws -> [TrashedSnapshot] {
+        try readStore()
+            .trashedSnapshots
+            .sorted { $0.deletedAt > $1.deletedAt }
+    }
+
+    public func moveLastSnapshotToTrash(in contextId: UUID) throws -> TrashedSnapshot? {
+        var trashed: TrashedSnapshot?
+        try mutateStore {
+            let contextSnapshots =
+                $0.snapshots
+                .enumerated()
+                .filter { $0.element.contextId == contextId }
+                .sorted(by: { $0.element.sequence > $1.element.sequence })
+            guard let last = contextSnapshots.first else {
+                return
+            }
+            let removed = $0.snapshots.remove(at: last.offset)
+            guard let contextIndex = $0.contexts.firstIndex(where: { $0.id == contextId }) else {
+                return
+            }
+            $0.contexts[contextIndex].snapshotCount = max(0, $0.contexts[contextIndex].snapshotCount - 1)
+            $0.contexts[contextIndex].updatedAt = Date()
+            trashed = TrashedSnapshot(snapshot: removed, sourceContextTitle: $0.contexts[contextIndex].title)
+            if let trashed {
+                $0.trashedSnapshots.insert(trashed, at: 0)
+            }
+        }
+        return trashed
+    }
+
+    public func moveSnapshotToTrash(id: UUID) throws -> TrashedSnapshot? {
+        var trashed: TrashedSnapshot?
+        try mutateStore {
+            guard let index = $0.snapshots.firstIndex(where: { $0.id == id }) else {
+                return
+            }
+            let removed = $0.snapshots.remove(at: index)
+            guard let contextIndex = $0.contexts.firstIndex(where: { $0.id == removed.contextId }) else {
+                return
+            }
+            $0.contexts[contextIndex].snapshotCount = max(0, $0.contexts[contextIndex].snapshotCount - 1)
+            $0.contexts[contextIndex].updatedAt = Date()
+            trashed = TrashedSnapshot(snapshot: removed, sourceContextTitle: $0.contexts[contextIndex].title)
+            if let trashed {
+                $0.trashedSnapshots.insert(trashed, at: 0)
+            }
+        }
+        return trashed
+    }
+
+    public func moveContextSnapshotsToTrash(contextId: UUID) throws -> [TrashedSnapshot] {
+        var removedSnapshots: [TrashedSnapshot] = []
+        try mutateStore {
+            guard let contextIndex = $0.contexts.firstIndex(where: { $0.id == contextId }) else {
+                return
+            }
+            let context = $0.contexts[contextIndex]
+            let removed = $0.snapshots.filter { $0.contextId == contextId }
+            removedSnapshots = removed
+                .sorted(by: { $0.sequence > $1.sequence })
+                .map { TrashedSnapshot(snapshot: $0, sourceContextTitle: context.title) }
+            $0.trashedContexts.insert(
+                TrashedContext(
+                    context: context,
+                    snapshots: removed.sorted(by: { $0.sequence < $1.sequence })
+                ),
+                at: 0
+            )
+            $0.snapshots.removeAll(where: { $0.contextId == contextId })
+            $0.contexts.remove(at: contextIndex)
+            if $0.appState.currentContextId == contextId {
+                $0.appState.currentContextId = nil
+            }
+        }
+        return removedSnapshots
+    }
+
+    public func restoreTrashedSnapshot(id: UUID, to contextId: UUID) throws -> Snapshot {
+        var restored: Snapshot?
+        try mutateStore {
+            guard let contextIndex = $0.contexts.firstIndex(where: { $0.id == contextId }) else {
+                return
+            }
+            guard let trashedIndex = $0.trashedSnapshots.firstIndex(where: { $0.id == id }) else {
+                return
+            }
+            let trashed = $0.trashedSnapshots.remove(at: trashedIndex)
+            let nextSequence =
+                ($0.snapshots
+                    .filter { $0.contextId == contextId }
+                    .map(\.sequence)
+                    .max() ?? 0) + 1
+            let snapshot = Snapshot(
+                id: trashed.snapshot.id,
+                contextId: contextId,
+                createdAt: trashed.snapshot.createdAt,
+                sequence: nextSequence,
+                title: trashed.snapshot.title,
+                sourceType: trashed.snapshot.sourceType,
+                appName: trashed.snapshot.appName,
+                bundleIdentifier: trashed.snapshot.bundleIdentifier,
+                windowTitle: trashed.snapshot.windowTitle,
+                captureMethod: trashed.snapshot.captureMethod,
+                rawContent: trashed.snapshot.rawContent,
+                ocrContent: trashed.snapshot.ocrContent,
+                denseContent: trashed.snapshot.denseContent,
+                provider: trashed.snapshot.provider,
+                model: trashed.snapshot.model,
+                accessibilityLineCount: trashed.snapshot.accessibilityLineCount,
+                ocrLineCount: trashed.snapshot.ocrLineCount,
+                processingDurationMs: trashed.snapshot.processingDurationMs
+            )
+            $0.snapshots.append(snapshot)
+            $0.contexts[contextIndex].snapshotCount += 1
+            $0.contexts[contextIndex].updatedAt = Date()
+            restored = snapshot
+        }
+        guard let restored else {
+            throw AppError.snapshotNotFound
+        }
+        return restored
+    }
+
+    public func moveSnapshot(id: UUID, to contextId: UUID) throws -> Snapshot? {
+        var moved: Snapshot?
+        try mutateStore {
+            guard let sourceIndex = $0.snapshots.firstIndex(where: { $0.id == id }) else {
+                return
+            }
+            guard let targetContextIndex = $0.contexts.firstIndex(where: { $0.id == contextId }) else {
+                return
+            }
+            let sourceSnapshot = $0.snapshots[sourceIndex]
+            guard let sourceContextIndex = $0.contexts.firstIndex(where: { $0.id == sourceSnapshot.contextId }) else {
+                return
+            }
+            let nextSequence =
+                ($0.snapshots
+                    .filter { $0.contextId == contextId && $0.id != id }
+                    .map(\.sequence)
+                    .max() ?? 0) + 1
+
+            $0.contexts[sourceContextIndex].snapshotCount = max(0, $0.contexts[sourceContextIndex].snapshotCount - 1)
+            $0.contexts[sourceContextIndex].updatedAt = Date()
+
+            let updatedSnapshot = Snapshot(
+                id: sourceSnapshot.id,
+                contextId: contextId,
+                createdAt: sourceSnapshot.createdAt,
+                sequence: nextSequence,
+                title: sourceSnapshot.title,
+                sourceType: sourceSnapshot.sourceType,
+                appName: sourceSnapshot.appName,
+                bundleIdentifier: sourceSnapshot.bundleIdentifier,
+                windowTitle: sourceSnapshot.windowTitle,
+                captureMethod: sourceSnapshot.captureMethod,
+                rawContent: sourceSnapshot.rawContent,
+                ocrContent: sourceSnapshot.ocrContent,
+                denseContent: sourceSnapshot.denseContent,
+                provider: sourceSnapshot.provider,
+                model: sourceSnapshot.model,
+                accessibilityLineCount: sourceSnapshot.accessibilityLineCount,
+                ocrLineCount: sourceSnapshot.ocrLineCount,
+                processingDurationMs: sourceSnapshot.processingDurationMs
+            )
+            $0.snapshots[sourceIndex] = updatedSnapshot
+            $0.contexts[targetContextIndex].snapshotCount += 1
+            $0.contexts[targetContextIndex].updatedAt = Date()
+            moved = updatedSnapshot
+        }
+        return moved
+    }
+
+    public func trashedContexts() throws -> [TrashedContext] {
+        try readStore()
+            .trashedContexts
+            .sorted { $0.deletedAt > $1.deletedAt }
+    }
+
+    public func restoreTrashedContext(id: UUID) throws -> Context {
+        var restored: Context?
+        try mutateStore {
+            guard let trashedIndex = $0.trashedContexts.firstIndex(where: { $0.id == id }) else {
+                return
+            }
+            let trashed = $0.trashedContexts.remove(at: trashedIndex)
+            let contextId = $0.contexts.contains(where: { $0.id == trashed.context.id }) ? UUID() : trashed.context.id
+            let snapshots = trashed.snapshots.enumerated().map { index, snapshot in
+                Snapshot(
+                    id: snapshot.id,
+                    contextId: contextId,
+                    createdAt: snapshot.createdAt,
+                    sequence: index + 1,
+                    title: snapshot.title,
+                    sourceType: snapshot.sourceType,
+                    appName: snapshot.appName,
+                    bundleIdentifier: snapshot.bundleIdentifier,
+                    windowTitle: snapshot.windowTitle,
+                    captureMethod: snapshot.captureMethod,
+                    rawContent: snapshot.rawContent,
+                    ocrContent: snapshot.ocrContent,
+                    denseContent: snapshot.denseContent,
+                    provider: snapshot.provider,
+                    model: snapshot.model,
+                    accessibilityLineCount: snapshot.accessibilityLineCount,
+                    ocrLineCount: snapshot.ocrLineCount,
+                    processingDurationMs: snapshot.processingDurationMs
+                )
+            }
+            let context = Context(
+                id: contextId,
+                title: trashed.context.title,
+                createdAt: trashed.context.createdAt,
+                updatedAt: Date(),
+                snapshotCount: snapshots.count
+            )
+            $0.contexts.insert(context, at: 0)
+            $0.snapshots.append(contentsOf: snapshots)
+            restored = context
+        }
+        guard let restored else {
+            throw AppError.contextNotFound
+        }
+        return restored
+    }
+
     public func saveScreenshotData(_ data: Data, snapshotId: UUID) throws {
         try FileManager.default.createDirectory(at: artifactsURL, withIntermediateDirectories: true)
         try data.write(to: screenshotURL(snapshotId: snapshotId), options: .atomic)
@@ -200,7 +481,13 @@ public final class ContextRepository: ContextRepositorying {
 
     private func loadStore() throws -> PersistedStore {
         if !FileManager.default.fileExists(atPath: storeURL.path) {
-            let initialStore = PersistedStore(appState: AppState(), contexts: [], snapshots: [])
+            let initialStore = PersistedStore(
+                appState: AppState(),
+                contexts: [],
+                snapshots: [],
+                trashedSnapshots: [],
+                trashedContexts: []
+            )
             try saveStore(initialStore)
             return initialStore
         }

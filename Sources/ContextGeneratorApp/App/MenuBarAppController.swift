@@ -20,8 +20,7 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
     private let permissionService: PermissionServicing = PermissionService()
 
     private var statusItem: NSStatusItem?
-    private var onboardingController: OnboardingWindowController?
-    private var libraryController: ContextLibraryController?
+    private var workspaceController: WorkspaceWindowController?
     private var statusMenuItem = NSMenuItem(title: "Status", action: nil, keyEquivalent: "")
     private var setupStatusMenuItem: NSMenuItem?
     private var completeSetupMenuItem: NSMenuItem?
@@ -114,7 +113,7 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
         if let snapshotActionsHeadlineMenuItem {
             menu.addItem(snapshotActionsHeadlineMenuItem)
         }
-        undoSnapshotMenuItem = addMenuItem("Undo Last Snapshot", action: #selector(undoLastCapture), key: "", menu: menu)
+        undoSnapshotMenuItem = addMenuItem("Delete Last Snapshot", action: #selector(undoLastCapture), key: "", menu: menu)
         promoteSnapshotMenuItem = addMenuItem("Move Last Snapshot to New Context", action: #selector(promoteLastCapture), key: "", menu: menu)
         newContextMenuItem = addMenuItem("Start New Context", action: #selector(startNewContext), key: "n", menu: menu)
         separatorAfterActions = .separator()
@@ -316,13 +315,13 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
             return
         }
         guard hasSnapshotsInCurrentContext() else {
-            updateFeedback("No snapshot to undo")
+            updateFeedback("No snapshot to move")
             refreshMenuState()
             return
         }
         do {
             let removed = try sessionManager.undoLastCaptureInCurrentContext()
-            updateFeedback("Removed \(removed.title)")
+            updateFeedback("Moved \(removed.title) to trash")
             refreshMenuState()
         } catch {
             AppLogger.error("undoLastCapture failed: \(error.localizedDescription)")
@@ -373,17 +372,7 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
     }
 
     @objc private func openContextLibrary() {
-        if libraryController == nil {
-            libraryController = ContextLibraryController(
-                repository: repository,
-                sessionManager: sessionManager,
-                onSelectionChange: { [weak self] text in
-                    self?.updateFeedback(text)
-                    self?.refreshMenuState()
-                }
-            )
-        }
-        libraryController?.showWindow(self)
+        workspaceWindowController().show(section: .contextLibrary, sender: self)
     }
 
     @objc private func copyDenseCurrentContext() {
@@ -412,17 +401,7 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
     }
 
     @objc private func openSettings() {
-        if onboardingController == nil {
-            onboardingController = OnboardingWindowController(
-                permissionService: permissionService,
-                appStateService: appStateService,
-                onComplete: { [weak self] in
-                    self?.updateFeedback("Setup complete")
-                    self?.refreshMenuState()
-                }
-            )
-        }
-        onboardingController?.showWindow(self)
+        workspaceWindowController().show(section: .setup, sender: self)
     }
 
     @objc private func quit() {
@@ -435,6 +414,28 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
         }
     }
 
+    private func workspaceWindowController() -> WorkspaceWindowController {
+        if let workspaceController {
+            return workspaceController
+        }
+        let created = WorkspaceWindowController(
+            permissionService: permissionService,
+            appStateService: appStateService,
+            repository: repository,
+            sessionManager: sessionManager,
+            onSetupComplete: { [weak self] in
+                self?.updateFeedback("Setup complete")
+                self?.refreshMenuState()
+            },
+            onSelectionChange: { [weak self] text in
+                self?.updateFeedback(text)
+                self?.refreshMenuState()
+            }
+        )
+        workspaceController = created
+        return created
+    }
+
     private func consumeDeferredUndoAfterCapture() -> Bool {
         guard deferredUndoForInFlightCapture else {
             return false
@@ -442,7 +443,7 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
         deferredUndoForInFlightCapture = false
         do {
             let removed = try sessionManager.undoLastCaptureInCurrentContext()
-            updateFeedback("Removed \(removed.title)")
+            updateFeedback("Moved \(removed.title) to trash")
             return true
         } catch {
             AppLogger.error("Deferred undo failed: \(error.localizedDescription)")
