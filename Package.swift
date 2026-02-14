@@ -2,7 +2,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "ContextGeneratorDemo",
+    name: "ContextGenerator",
     platforms: [
         .macOS(.v13)
     ],
@@ -12,8 +12,8 @@ let package = Package(
             targets: ["ContextGenerator"]
         ),
         .executable(
-            name: "ContextGeneratorDemo",
-            targets: ["ContextGeneratorDemo"]
+            name: "ContextGeneratorApp",
+            targets: ["ContextGeneratorApp"]
         )
     ],
     targets: [
@@ -28,8 +28,9 @@ let package = Package(
             ]
         ),
         .executableTarget(
-            name: "ContextGeneratorDemo",
+            name: "ContextGeneratorApp",
             dependencies: ["ContextGenerator"],
+            path: "Sources/ContextGeneratorApp",
             linkerSettings: [
                 .linkedFramework("AppKit"),
                 .linkedFramework("ApplicationServices"),

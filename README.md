@@ -19,7 +19,7 @@ Local-first macOS menu bar app for collecting context from desktop apps and brow
 
 ## Run
 ```bash
-swift run ContextGeneratorDemo
+swift run ContextGeneratorApp
 ```
 
 ## Saved files
