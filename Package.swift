@@ -16,6 +16,9 @@ let package = Package(
             targets: ["ContextGeneratorApp"]
         )
     ],
+    dependencies: [
+        .package(url: "https://github.com/firebase/firebase-ios-sdk.git", from: "11.0.0")
+    ],
     targets: [
         .target(
             name: "ContextGenerator",
@@ -29,8 +32,16 @@ let package = Package(
         ),
         .executableTarget(
             name: "ContextGeneratorApp",
-            dependencies: ["ContextGenerator"],
+            dependencies: [
+                "ContextGenerator",
+                .product(name: "FirebaseCore", package: "firebase-ios-sdk"),
+                .product(name: "FirebaseAnalytics", package: "firebase-ios-sdk"),
+                .product(name: "FirebaseCrashlytics", package: "firebase-ios-sdk")
+            ],
             path: "Sources/ContextGeneratorApp",
+            resources: [
+                .copy("Resources/GoogleService-Info.plist")
+            ],
             linkerSettings: [
                 .linkedFramework("AppKit"),
                 .linkedFramework("ApplicationServices"),
