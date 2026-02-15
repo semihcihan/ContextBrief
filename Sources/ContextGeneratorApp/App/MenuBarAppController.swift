@@ -515,22 +515,40 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
         )
     }
 
-    private func configuredModelConfig() throws -> (ProviderName, String, String)? {
+    private struct ModelConfig {
+        let provider: ProviderName
+        let model: String
+        let apiKey: String
+    }
+
+    private func configuredModelConfig(forTitleGeneration: Bool = false) throws -> ModelConfig? {
+        let developmentConfig = DevelopmentConfig.shared
         let state = try appStateService.state()
-        guard let provider = state.selectedProvider, let model = state.selectedModel else {
+        guard let selectedProvider = state.selectedProvider else {
             AppLogger.debug("configuredModelConfig unavailable: provider/model missing")
             return nil
         }
-        guard let apiKey = try keychain.get("api.\(provider.rawValue)") else {
+        let provider = forTitleGeneration
+            ? developmentConfig.providerForTitleGeneration(selectedProvider: selectedProvider)
+            : developmentConfig.providerForDensification(selectedProvider: selectedProvider)
+        let model = state.selectedModel ?? ""
+        guard provider == .apple || !model.isEmpty else {
+            AppLogger.debug("configuredModelConfig unavailable: model missing for provider=\(provider.rawValue)")
+            return nil
+        }
+        let apiKey = try keychain.get("api.\(provider.rawValue)") ?? ""
+        guard provider == .apple || !apiKey.isEmpty else {
             AppLogger.debug("configuredModelConfig unavailable: key missing for provider=\(provider.rawValue)")
             return nil
         }
-        AppLogger.debug("configuredModelConfig available provider=\(provider.rawValue) model=\(model)")
-        return (provider, model, apiKey)
+        AppLogger.debug(
+            "configuredModelConfig available selectedProvider=\(selectedProvider.rawValue) effectiveProvider=\(provider.rawValue) model=\(model)"
+        )
+        return ModelConfig(provider: provider, model: model, apiKey: apiKey)
     }
 
     private func applyGeneratedNames(_ result: CaptureWorkflowResult) async {
-        guard let config = ((try? configuredModelConfig()) ?? nil) else {
+        guard let config = ((try? configuredModelConfig(forTitleGeneration: true)) ?? nil) else {
             AppLogger.debug("applyGeneratedNames skipped: model config unavailable")
             return
         }
@@ -538,9 +556,9 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
         let snapshotTitle = await namingService.suggestSnapshotTitle(
             capturedSnapshot: result.capturedSnapshot,
             denseContent: result.snapshot.denseContent,
-            provider: config.0,
-            model: config.1,
-            apiKey: config.2,
+            provider: config.provider,
+            model: config.model,
+            apiKey: config.apiKey,
             fallback: result.snapshot.title
         )
 
@@ -549,11 +567,27 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
             AppLogger.debug("applyGeneratedNames snapshot title updated snapshotId=\(snapshot.id.uuidString) title=\(snapshot.title)")
         } catch {}
 
+        if result.snapshot.sequence == 1 {
+            _ = try? sessionManager.renameContext(result.context.id, title: snapshotTitle)
+            AppLogger.debug(
+                "applyGeneratedNames context title set from first snapshot contextId=\(result.context.id.uuidString) title=\(snapshotTitle)"
+            )
+            return
+        }
+
+        let refreshEvery = DevelopmentConfig.shared.contextTitleRefreshEvery(for: config.provider)
+        guard result.snapshot.sequence % refreshEvery == 0 else {
+            AppLogger.debug(
+                "applyGeneratedNames context title skipped sequence=\(result.snapshot.sequence) contextId=\(result.context.id.uuidString) refreshEvery=\(refreshEvery) provider=\(config.provider.rawValue)"
+            )
+            return
+        }
+
         await applyGeneratedContextName(contextId: result.context.id, fallback: result.context.title)
     }
 
     private func applyGeneratedContextName(contextId: UUID, fallback: String) async {
-        guard let config = ((try? configuredModelConfig()) ?? nil) else {
+        guard let config = ((try? configuredModelConfig(forTitleGeneration: true)) ?? nil) else {
             AppLogger.debug("applyGeneratedContextName skipped: model config unavailable")
             return
         }
@@ -568,9 +602,9 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
 
         let title = await namingService.suggestContextTitle(
             snapshots: snapshots,
-            provider: config.0,
-            model: config.1,
-            apiKey: config.2,
+            provider: config.provider,
+            model: config.model,
+            apiKey: config.apiKey,
             fallback: fallback
         )
         _ = try? sessionManager.renameContext(contextId, title: title)

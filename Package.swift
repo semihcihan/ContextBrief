@@ -40,7 +40,7 @@ let package = Package(
         ),
         .testTarget(
             name: "ContextGeneratorTests",
-            dependencies: ["ContextGenerator"],
+            dependencies: ["ContextGenerator", "ContextGeneratorApp"],
             path: "Tests/ContextGeneratorTests"
         )
     ]

@@ -1,5 +1,9 @@
 import Foundation
 
+#if canImport(FoundationModels)
+import FoundationModels
+#endif
+
 public struct DensificationRequest {
     public let inputText: String
     public let appName: String
@@ -50,6 +54,8 @@ public enum ProviderClientFactory {
             return AnthropicProviderClient(session: session)
         case .gemini:
             return GeminiProviderClient(session: session)
+        case .apple:
+            return AppleFoundationProviderClient()
         }
     }
 }
@@ -255,5 +261,39 @@ private struct GeminiProviderClient: ProviderClient {
             throw AppError.providerRequestFailed("Gemini returned an empty response. Check model and account status.")
         }
         return normalized
+    }
+}
+
+private struct AppleFoundationProviderClient: ProviderClient {
+    let provider: ProviderName = .apple
+
+    func requestText(request: ProviderTextRequest, apiKey: String, model: String) async throws -> String {
+#if canImport(FoundationModels)
+        if #available(macOS 26.0, *) {
+            guard SystemLanguageModel.default.availability == .available else {
+                throw AppError.providerRequestFailed(
+                    "Apple Foundation Models are not available on this Mac."
+                )
+            }
+            let session: LanguageModelSession
+            if
+                let instruction = request.systemInstruction?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !instruction.isEmpty
+            {
+                session = LanguageModelSession(instructions: instruction)
+            } else {
+                session = LanguageModelSession()
+            }
+            let response = try await session.respond(to: request.prompt)
+            let text = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else {
+                throw AppError.providerRequestFailed("Apple Foundation Models returned an empty response.")
+            }
+            return text
+        }
+#endif
+        throw AppError.providerRequestFailed(
+            "Apple Foundation Models are unavailable in this environment."
+        )
     }
 }
