@@ -12,7 +12,7 @@ else {
 }
 FirebaseApp.configure(options: firebaseOptions)
 Analytics.setAnalyticsCollectionEnabled(true)
-Analytics.logEvent("app_launch", parameters: nil)
+EventTracker.shared.track(.appLaunch)
 Crashlytics.crashlytics().setCrashlyticsCollectionEnabled(true)
 let delegate = MenuBarAppController()
 app.delegate = delegate

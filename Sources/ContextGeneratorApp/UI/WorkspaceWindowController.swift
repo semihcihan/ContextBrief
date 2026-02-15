@@ -2,6 +2,8 @@ import AppKit
 import ContextGenerator
 
 final class WorkspaceWindowController: NSWindowController {
+    private let eventTracker = EventTracker.shared
+
     enum Section: Int, CaseIterable {
         case setup
         case shortcuts
@@ -126,6 +128,13 @@ final class WorkspaceWindowController: NSWindowController {
     }
 
     func show(section: Section, sender: Any?) {
+        eventTracker.track(
+            .windowSectionOpened,
+            parameters: [
+                "source": "window_show",
+                "section": analyticsSectionName(section)
+            ]
+        )
         select(section)
         presentWindowAsFrontmost(sender)
     }
@@ -161,6 +170,19 @@ final class WorkspaceWindowController: NSWindowController {
         case .trash:
             trashLibraryController.refreshData()
             contentHostController.show(trashLibraryController)
+        }
+    }
+
+    private func analyticsSectionName(_ section: Section) -> String {
+        switch section {
+        case .setup:
+            return "setup"
+        case .shortcuts:
+            return "shortcuts"
+        case .contextLibrary:
+            return "context_library"
+        case .trash:
+            return "trash"
         }
     }
 }
