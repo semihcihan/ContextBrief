@@ -4,6 +4,7 @@ import ContextGenerator
 final class WorkspaceWindowController: NSWindowController {
     enum Section: Int, CaseIterable {
         case setup
+        case shortcuts
         case contextLibrary
         case trash
 
@@ -11,6 +12,8 @@ final class WorkspaceWindowController: NSWindowController {
             switch self {
             case .setup:
                 return "Setup"
+            case .shortcuts:
+                return "Shortcuts"
             case .contextLibrary:
                 return "Context Library"
             case .trash:
@@ -22,6 +25,8 @@ final class WorkspaceWindowController: NSWindowController {
             switch self {
             case .setup:
                 return "slider.horizontal.3"
+            case .shortcuts:
+                return "keyboard"
             case .contextLibrary:
                 return "books.vertical"
             case .trash:
@@ -33,6 +38,7 @@ final class WorkspaceWindowController: NSWindowController {
     private let sidebarController = WorkspaceSidebarViewController()
     private let contentHostController = WorkspaceContentHostController()
     private let setupController: SetupViewController
+    private let shortcutSettingsController: ShortcutSettingsViewController
     private let contextLibraryController: ContextLibraryController
     private let trashLibraryController: TrashLibraryController
     private let notificationCenter: NotificationCenter
@@ -44,6 +50,7 @@ final class WorkspaceWindowController: NSWindowController {
         repository: ContextRepositorying,
         sessionManager: ContextSessionManager,
         onSetupComplete: @escaping () -> Void,
+        onShortcutsUpdated: @escaping () -> [String],
         onSelectionChange: @escaping (String) -> Void,
         notificationCenter: NotificationCenter = .default
     ) {
@@ -52,6 +59,10 @@ final class WorkspaceWindowController: NSWindowController {
             permissionService: permissionService,
             appStateService: appStateService,
             onComplete: onSetupComplete
+        )
+        shortcutSettingsController = ShortcutSettingsViewController(
+            appStateService: appStateService,
+            onShortcutsUpdated: onShortcutsUpdated
         )
         contextLibraryController = ContextLibraryController(
             repository: repository,
@@ -121,6 +132,8 @@ final class WorkspaceWindowController: NSWindowController {
         switch selectedSection {
         case .setup:
             return
+        case .shortcuts:
+            return
         case .contextLibrary:
             contextLibraryController.refreshData()
         case .trash:
@@ -138,6 +151,8 @@ final class WorkspaceWindowController: NSWindowController {
         switch section {
         case .setup:
             contentHostController.show(setupController)
+        case .shortcuts:
+            contentHostController.show(shortcutSettingsController)
         case .contextLibrary:
             contextLibraryController.refreshData()
             contentHostController.show(contextLibraryController)

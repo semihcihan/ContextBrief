@@ -36,6 +36,7 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
     private var separatorAfterPrimary: NSMenuItem?
     private var separatorAfterActions: NSMenuItem?
     private var separatorAfterLibrary: NSMenuItem?
+    private var globalHotkeyManager: GlobalHotkeyManager?
     private var isCaptureInProgress = false
     private var deferredUndoForInFlightCapture = false
 
@@ -43,6 +44,7 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
         AppLogger.debug("App launch finished. debugLoggingEnabled=\(AppLogger.debugLoggingEnabled)")
         setupMainMenu()
         setupStatusItem()
+        setupGlobalHotkeys()
         ensureOnboarding()
     }
 
@@ -126,6 +128,7 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
         }
         _ = addMenuItem("Settings", action: #selector(openSettings), key: "", menu: menu)
         _ = addMenuItem("Quit", action: #selector(quit), key: "", menu: menu)
+        applyMenuShortcuts()
 
         statusItem.menu = menu
         self.statusItem = statusItem
@@ -423,6 +426,9 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
                 self?.updateFeedback("Setup complete")
                 self?.refreshMenuState()
             },
+            onShortcutsUpdated: { [weak self] in
+                self?.updateShortcutBindings() ?? []
+            },
             onSelectionChange: { [weak self] text in
                 self?.updateFeedback(text)
                 self?.refreshMenuState()
@@ -609,5 +615,75 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
         )
         _ = try? sessionManager.renameContext(contextId, title: title)
         AppLogger.debug("applyGeneratedContextName updated contextId=\(contextId.uuidString) oldTitle=\(context.title) newTitle=\(title)")
+    }
+
+    private func setupGlobalHotkeys() {
+        globalHotkeyManager = GlobalHotkeyManager { [weak self] action in
+            guard let self else {
+                return
+            }
+            DispatchQueue.main.async {
+                switch action {
+                case .addSnapshot:
+                    self.captureContext()
+                case .copyCurrentContext:
+                    self.copyDenseCurrentContext()
+                }
+            }
+        }
+        _ = updateShortcutBindings()
+    }
+
+    private func updateShortcutBindings() -> [String] {
+        applyMenuShortcuts()
+        return configureGlobalHotkeys()
+    }
+
+    private func configureGlobalHotkeys() -> [String] {
+        guard let globalHotkeyManager else {
+            return []
+        }
+        let shortcuts = (try? appStateService.shortcuts()) ?? .defaultValue
+        let failed = globalHotkeyManager.apply(shortcuts: shortcuts)
+        let labels = failed.map {
+            switch $0 {
+            case .addSnapshot:
+                return "Add Snapshot"
+            case .copyCurrentContext:
+                return "Copy Current Context"
+            }
+        }
+        guard !labels.isEmpty else {
+            return []
+        }
+        updateFeedback("Shortcut unavailable: \(labels.joined(separator: ", "))")
+        return labels
+    }
+
+    private func applyMenuShortcuts() {
+        let shortcuts = (try? appStateService.shortcuts()) ?? .defaultValue
+        applyMenuShortcut(item: addSnapshotMenuItem, binding: shortcuts.addSnapshot)
+        applyMenuShortcut(item: copyDenseMenuItem, binding: shortcuts.copyCurrentContext)
+    }
+
+    private func applyMenuShortcut(item: NSMenuItem?, binding: ShortcutBinding) {
+        guard let item else {
+            return
+        }
+        item.keyEquivalent = ShortcutKeyOptions.keyEquivalent(for: binding.keyCode)
+        var mask: NSEvent.ModifierFlags = []
+        if binding.command {
+            mask.insert(.command)
+        }
+        if binding.option {
+            mask.insert(.option)
+        }
+        if binding.control {
+            mask.insert(.control)
+        }
+        if binding.shift {
+            mask.insert(.shift)
+        }
+        item.keyEquivalentModifierMask = mask
     }
 }
