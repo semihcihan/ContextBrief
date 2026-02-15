@@ -12,9 +12,33 @@ public struct DensificationRequest {
     }
 }
 
+public struct ProviderTextRequest {
+    public let systemInstruction: String?
+    public let prompt: String
+
+    public init(systemInstruction: String? = nil, prompt: String) {
+        self.systemInstruction = systemInstruction
+        self.prompt = prompt
+    }
+}
+
 public protocol ProviderClient {
     var provider: ProviderName { get }
+    func requestText(request: ProviderTextRequest, apiKey: String, model: String) async throws -> String
     func densify(request: DensificationRequest, apiKey: String, model: String) async throws -> String
+}
+
+public extension ProviderClient {
+    func densify(request: DensificationRequest, apiKey: String, model: String) async throws -> String {
+        try await requestText(
+            request: ProviderTextRequest(
+                systemInstruction: "You produce concise, complete context with no missing key information.",
+                prompt: densificationPrompt(for: request)
+            ),
+            apiKey: apiKey,
+            model: model
+        )
+    }
 }
 
 public enum ProviderClientFactory {
@@ -94,8 +118,10 @@ private func requestData(
 
 private func densificationPrompt(for request: DensificationRequest) -> String {
     [
-        "You are compressing captured UI/context text.",
-        "Goal: remove repetitive boilerplate while preserving all meaningful facts and intent.",
+        "You are extracting the essential context from captured UI text.",
+        "Keep meaningful facts, intent, actions, outcomes, constraints, and errors.",
+        "Remove low-signal UI noise such as nav labels, menu items, generic button text, repeated form labels, and boilerplate chrome.",
+        "Keep UI text only when it changes meaning (for example selected options, warnings, status, or action-specific labels).",
         "Do not add assumptions.",
         "Return dense plain text only.",
         "App: \(request.appName)",
@@ -109,7 +135,7 @@ private struct OpenAIProviderClient: ProviderClient {
     let provider: ProviderName = .openai
     let session: URLSession
 
-    func densify(request: DensificationRequest, apiKey: String, model: String) async throws -> String {
+    func requestText(request: ProviderTextRequest, apiKey: String, model: String) async throws -> String {
         let endpoint = URL(string: "https://api.openai.com/v1/chat/completions")!
         var urlRequest = URLRequest(url: endpoint)
         urlRequest.httpMethod = "POST"
@@ -117,13 +143,19 @@ private struct OpenAIProviderClient: ProviderClient {
         urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
+        var messages: [[String: Any]] = []
+        if
+            let systemInstruction = request.systemInstruction?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !systemInstruction.isEmpty
+        {
+            messages.append(["role": "system", "content": systemInstruction])
+        }
+        messages.append(["role": "user", "content": request.prompt])
+
         let body: [String: Any] = [
             "model": model,
             "temperature": 0.1,
-            "messages": [
-                ["role": "system", "content": "You produce concise, complete context with no missing key information."],
-                ["role": "user", "content": densificationPrompt(for: request)]
-            ]
+            "messages": messages
         ]
         urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body)
 
@@ -143,7 +175,7 @@ private struct AnthropicProviderClient: ProviderClient {
     let provider: ProviderName = .anthropic
     let session: URLSession
 
-    func densify(request: DensificationRequest, apiKey: String, model: String) async throws -> String {
+    func requestText(request: ProviderTextRequest, apiKey: String, model: String) async throws -> String {
         let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
         var urlRequest = URLRequest(url: endpoint)
         urlRequest.httpMethod = "POST"
@@ -152,17 +184,23 @@ private struct AnthropicProviderClient: ProviderClient {
         urlRequest.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        let body: [String: Any] = [
+        var body: [String: Any] = [
             "model": model,
             "max_tokens": 1400,
             "temperature": 0.1,
             "messages": [
                 [
                     "role": "user",
-                    "content": densificationPrompt(for: request)
+                    "content": request.prompt
                 ]
             ]
         ]
+        if
+            let systemInstruction = request.systemInstruction?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !systemInstruction.isEmpty
+        {
+            body["system"] = systemInstruction
+        }
         urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let validatedData = try await requestData(session: session, request: urlRequest, providerName: "Anthropic")
@@ -180,18 +218,18 @@ private struct GeminiProviderClient: ProviderClient {
     let provider: ProviderName = .gemini
     let session: URLSession
 
-    func densify(request: DensificationRequest, apiKey: String, model: String) async throws -> String {
+    func requestText(request: ProviderTextRequest, apiKey: String, model: String) async throws -> String {
         let endpoint = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(model):generateContent?key=\(apiKey)")!
         var urlRequest = URLRequest(url: endpoint)
         urlRequest.httpMethod = "POST"
         urlRequest.timeoutInterval = providerRequestTimeoutSeconds
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        let body: [String: Any] = [
+        var body: [String: Any] = [
             "contents": [
                 [
                     "parts": [
-                        ["text": densificationPrompt(for: request)]
+                        ["text": request.prompt]
                     ]
                 ]
             ],
@@ -199,6 +237,12 @@ private struct GeminiProviderClient: ProviderClient {
                 "temperature": 0.1
             ]
         ]
+        if
+            let systemInstruction = request.systemInstruction?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !systemInstruction.isEmpty
+        {
+            body["system_instruction"] = ["parts": [["text": systemInstruction]]]
+        }
         urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let validatedData = try await requestData(session: session, request: urlRequest, providerName: "Gemini")

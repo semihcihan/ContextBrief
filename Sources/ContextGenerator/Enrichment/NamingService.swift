@@ -24,7 +24,13 @@ public final class NamingService {
             denseContent
         ].joined(separator: "\n")
 
-        let raw = await requestText(provider: provider, model: model, apiKey: apiKey, prompt: prompt)
+        let raw = await requestText(
+            provider: provider,
+            model: model,
+            apiKey: apiKey,
+            systemInstruction: "You generate concise names for saved work context.",
+            prompt: prompt
+        )
         return normalizedTitle(raw, fallback: fallback)
     }
 
@@ -46,7 +52,13 @@ public final class NamingService {
             joined
         ].joined(separator: "\n")
 
-        let raw = await requestText(provider: provider, model: model, apiKey: apiKey, prompt: prompt)
+        let raw = await requestText(
+            provider: provider,
+            model: model,
+            apiKey: apiKey,
+            systemInstruction: "You generate concise names for saved work context.",
+            prompt: prompt
+        )
         return normalizedTitle(raw, fallback: fallback)
     }
 
@@ -67,83 +79,18 @@ public final class NamingService {
         provider: ProviderName,
         model: String,
         apiKey: String,
+        systemInstruction: String? = nil,
         prompt: String
     ) async -> String? {
         do {
-            switch provider {
-            case .openai:
-                return try await requestOpenAI(model: model, apiKey: apiKey, prompt: prompt)
-            case .anthropic:
-                return try await requestAnthropic(model: model, apiKey: apiKey, prompt: prompt)
-            case .gemini:
-                return try await requestGemini(model: model, apiKey: apiKey, prompt: prompt)
-            }
+            let client = ProviderClientFactory.make(provider: provider, session: session)
+            return try await client.requestText(
+                request: ProviderTextRequest(systemInstruction: systemInstruction, prompt: prompt),
+                apiKey: apiKey,
+                model: model
+            )
         } catch {
             return nil
         }
-    }
-
-    private func requestOpenAI(model: String, apiKey: String, prompt: String) async throws -> String? {
-        let endpoint = URL(string: "https://api.openai.com/v1/chat/completions")!
-        var urlRequest = URLRequest(url: endpoint)
-        urlRequest.httpMethod = "POST"
-        urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let body: [String: Any] = [
-            "model": model,
-            "temperature": 0.1,
-            "messages": [
-                ["role": "system", "content": "You generate concise names for saved work context."],
-                ["role": "user", "content": prompt]
-            ]
-        ]
-        urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body)
-        let (data, _) = try await session.data(for: urlRequest)
-        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-        let choices = json?["choices"] as? [[String: Any]]
-        let message = choices?.first?["message"] as? [String: Any]
-        return message?["content"] as? String
-    }
-
-    private func requestAnthropic(model: String, apiKey: String, prompt: String) async throws -> String? {
-        let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
-        var urlRequest = URLRequest(url: endpoint)
-        urlRequest.httpMethod = "POST"
-        urlRequest.setValue(apiKey, forHTTPHeaderField: "x-api-key")
-        urlRequest.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let body: [String: Any] = [
-            "model": model,
-            "max_tokens": 120,
-            "temperature": 0.1,
-            "messages": [
-                ["role": "user", "content": prompt]
-            ]
-        ]
-        urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body)
-        let (data, _) = try await session.data(for: urlRequest)
-        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-        let content = json?["content"] as? [[String: Any]]
-        return content?.first?["text"] as? String
-    }
-
-    private func requestGemini(model: String, apiKey: String, prompt: String) async throws -> String? {
-        let endpoint = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(model):generateContent?key=\(apiKey)")!
-        var urlRequest = URLRequest(url: endpoint)
-        urlRequest.httpMethod = "POST"
-        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let body: [String: Any] = [
-            "contents": [
-                ["parts": [["text": prompt]]]
-            ],
-            "generationConfig": ["temperature": 0.1]
-        ]
-        urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body)
-        let (data, _) = try await session.data(for: urlRequest)
-        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-        let candidates = json?["candidates"] as? [[String: Any]]
-        let content = candidates?.first?["content"] as? [String: Any]
-        let parts = content?["parts"] as? [[String: Any]]
-        return parts?.first?["text"] as? String
     }
 }
