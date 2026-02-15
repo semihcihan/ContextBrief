@@ -6,5 +6,6 @@ final class DensificationServiceTests: XCTestCase {
         XCTAssertNotNil(ProviderClientFactory.make(provider: .openai))
         XCTAssertNotNil(ProviderClientFactory.make(provider: .anthropic))
         XCTAssertNotNil(ProviderClientFactory.make(provider: .gemini))
+        XCTAssertNotNil(ProviderClientFactory.make(provider: .apple))
     }
 }

@@ -25,9 +25,14 @@ public final class AppStateService {
         if let apiKey, !apiKey.isEmpty {
             try keychain.set(apiKey, for: "api.\(provider.rawValue)")
         }
+        if !model.isEmpty {
+            try keychain.set(model, for: modelStorageKey(for: provider))
+        }
         var state = try repository.appState()
         state.selectedProvider = provider
-        state.selectedModel = model
+        if !model.isEmpty {
+            state.selectedModel = model
+        }
         try repository.saveAppState(state)
     }
 
@@ -43,17 +48,26 @@ public final class AppStateService {
 
     public func providerSelection() throws -> ProviderSelection? {
         let state = try repository.appState()
-        guard let provider = state.selectedProvider, let model = state.selectedModel else {
+        guard let provider = state.selectedProvider else {
             return nil
         }
+        let model = try keychain.get(modelStorageKey(for: provider)) ?? state.selectedModel ?? ""
         return ProviderSelection(
             provider: provider,
             model: model,
-            hasAPIKey: try keychain.get("api.\(provider.rawValue)") != nil
+            hasAPIKey: provider == .apple ? true : ((try keychain.get("api.\(provider.rawValue)")) != nil)
         )
     }
 
     public func apiKey(for provider: ProviderName) throws -> String? {
         try keychain.get("api.\(provider.rawValue)")
+    }
+
+    public func model(for provider: ProviderName) throws -> String? {
+        try keychain.get(modelStorageKey(for: provider))
+    }
+
+    private func modelStorageKey(for provider: ProviderName) -> String {
+        "model.\(provider.rawValue)"
     }
 }

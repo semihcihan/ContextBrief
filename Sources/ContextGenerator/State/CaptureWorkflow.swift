@@ -30,11 +30,17 @@ public final class CaptureWorkflow {
     public func runCapture() async throws -> CaptureWorkflowResult {
         let (capturedSnapshot, screenshotData) = try captureService.capture()
         let state = try repository.appState()
-        guard let provider = state.selectedProvider, let model = state.selectedModel else {
+        guard let selectedProvider = state.selectedProvider else {
+            throw AppError.providerNotConfigured
+        }
+        let provider = DevelopmentConfig.shared.providerForDensification(selectedProvider: selectedProvider)
+        let model = state.selectedModel ?? ""
+        guard provider == .apple || !model.isEmpty else {
             throw AppError.providerNotConfigured
         }
 
-        guard let key = try keychain.get("api.\(provider.rawValue)") else {
+        let key = try keychain.get("api.\(provider.rawValue)") ?? ""
+        guard provider == .apple || !key.isEmpty else {
             throw AppError.keyNotConfigured
         }
 
