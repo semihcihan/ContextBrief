@@ -21,7 +21,7 @@ dev:
 		--watch Sources \
 		--watch Package.swift \
 		--restart \
-		-- "$(DEBUG_ENV) DEVELOPER_DIR=$(DEVELOPER_DIR) swift run $(APP_TARGET)"
+		-- env $(DEBUG_ENV) DEVELOPER_DIR=$(DEVELOPER_DIR) swift run $(APP_TARGET)
 
 log:
 	@:

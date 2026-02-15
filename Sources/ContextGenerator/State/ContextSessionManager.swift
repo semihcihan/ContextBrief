@@ -47,10 +47,6 @@ public final class ContextSessionManager {
         try repository.snapshots(in: currentContext().id)
     }
 
-    public func hasLastSnapshotInCurrentContext() throws -> Bool {
-        try repository.lastSnapshot(in: currentContext().id) != nil
-    }
-
     public func appendSnapshot(
         rawCapture: CapturedSnapshot,
         denseContent: String,
@@ -116,21 +112,6 @@ public final class ContextSessionManager {
         return newContext
     }
 
-    public func renameCurrentContext(_ title: String) throws {
-        var context = try currentContext()
-        context.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        context.updatedAt = Date()
-        try repository.updateContext(context)
-    }
-
-    public func renameSnapshot(_ snapshotId: UUID, title: String) throws {
-        guard var snapshot = try snapshotsInCurrentContext().first(where: { $0.id == snapshotId }) else {
-            throw AppError.snapshotNotFound
-        }
-        snapshot.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        try repository.updateSnapshot(snapshot)
-    }
-
     @discardableResult
     public func deleteContextToTrash(_ contextId: UUID) throws -> Int {
         let removed = try repository.moveContextSnapshotsToTrash(contextId: contextId)
@@ -175,5 +156,43 @@ public final class ContextSessionManager {
             try setCurrentContext(restored.id)
         }
         return restored
+    }
+
+    public func deleteTrashedSnapshotPermanently(_ trashedSnapshotId: UUID) throws {
+        guard try repository.deleteTrashedSnapshot(id: trashedSnapshotId) else {
+            throw AppError.snapshotNotFound
+        }
+    }
+
+    public func deleteTrashedContextPermanently(_ trashedContextId: UUID) throws {
+        guard try repository.deleteTrashedContext(id: trashedContextId) else {
+            throw AppError.contextNotFound
+        }
+    }
+
+    @discardableResult
+    public func renameContext(_ contextId: UUID, title: String) throws -> Context {
+        guard var context = try repository.context(id: contextId) else {
+            throw AppError.contextNotFound
+        }
+        context.title = title
+        context.updatedAt = Date()
+        try repository.updateContext(context)
+        return context
+    }
+
+    @discardableResult
+    public func renameSnapshot(_ snapshotId: UUID, title: String) throws -> Snapshot {
+        let contexts = try repository.listContexts()
+        for context in contexts {
+            guard let snapshot = try repository.snapshots(in: context.id).first(where: { $0.id == snapshotId }) else {
+                continue
+            }
+            var renamed = snapshot
+            renamed.title = title
+            try repository.updateSnapshot(renamed)
+            return renamed
+        }
+        throw AppError.snapshotNotFound
     }
 }

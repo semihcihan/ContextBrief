@@ -8,14 +8,12 @@ public protocol ContextRepositorying {
     func context(id: UUID) throws -> Context?
     func createContext(title: String) throws -> Context
     func updateContext(_ context: Context) throws
-    func removeContext(id: UUID) throws
 
     func snapshots(in contextId: UUID) throws -> [Snapshot]
     func appendSnapshot(_ snapshot: Snapshot) throws
     func updateSnapshot(_ snapshot: Snapshot) throws
     func removeLastSnapshot(in contextId: UUID) throws -> Snapshot?
     func lastSnapshot(in contextId: UUID) throws -> Snapshot?
-    func removeSnapshot(id: UUID) throws
     func trashSnapshots() throws -> [TrashedSnapshot]
     func moveLastSnapshotToTrash(in contextId: UUID) throws -> TrashedSnapshot?
     func moveSnapshotToTrash(id: UUID) throws -> TrashedSnapshot?
@@ -24,9 +22,10 @@ public protocol ContextRepositorying {
     func moveSnapshot(id: UUID, to contextId: UUID) throws -> Snapshot?
     func trashedContexts() throws -> [TrashedContext]
     func restoreTrashedContext(id: UUID) throws -> Context
+    func deleteTrashedSnapshot(id: UUID) throws -> Bool
+    func deleteTrashedContext(id: UUID) throws -> Bool
 
     func saveScreenshotData(_ data: Data, snapshotId: UUID) throws
-    func screenshotData(snapshotId: UUID) throws -> Data?
 }
 
 private struct PersistedStore: Codable {
@@ -135,18 +134,6 @@ public final class ContextRepository: ContextRepositorying {
         }
     }
 
-    public func removeContext(id: UUID) throws {
-        try mutateStore {
-            guard let contextIndex = $0.contexts.firstIndex(where: { $0.id == id }) else {
-                return
-            }
-            $0.contexts.remove(at: contextIndex)
-            if $0.appState.currentContextId == id {
-                $0.appState.currentContextId = nil
-            }
-        }
-    }
-
     public func snapshots(in contextId: UUID) throws -> [Snapshot] {
         try readStore()
             .snapshots
@@ -199,20 +186,6 @@ public final class ContextRepository: ContextRepositorying {
 
     public func lastSnapshot(in contextId: UUID) throws -> Snapshot? {
         try snapshots(in: contextId).last
-    }
-
-    public func removeSnapshot(id: UUID) throws {
-        try mutateStore {
-            guard let index = $0.snapshots.firstIndex(where: { $0.id == id }) else {
-                return
-            }
-
-            let removed = $0.snapshots.remove(at: index)
-            if let contextIndex = $0.contexts.firstIndex(where: { $0.id == removed.contextId }) {
-                $0.contexts[contextIndex].snapshotCount = max(0, $0.contexts[contextIndex].snapshotCount - 1)
-                $0.contexts[contextIndex].updatedAt = Date()
-            }
-        }
     }
 
     public func trashSnapshots() throws -> [TrashedSnapshot] {
@@ -442,17 +415,33 @@ public final class ContextRepository: ContextRepositorying {
         return restored
     }
 
+    public func deleteTrashedSnapshot(id: UUID) throws -> Bool {
+        var deleted = false
+        try mutateStore {
+            guard let index = $0.trashedSnapshots.firstIndex(where: { $0.id == id }) else {
+                return
+            }
+            $0.trashedSnapshots.remove(at: index)
+            deleted = true
+        }
+        return deleted
+    }
+
+    public func deleteTrashedContext(id: UUID) throws -> Bool {
+        var deleted = false
+        try mutateStore {
+            guard let index = $0.trashedContexts.firstIndex(where: { $0.id == id }) else {
+                return
+            }
+            $0.trashedContexts.remove(at: index)
+            deleted = true
+        }
+        return deleted
+    }
+
     public func saveScreenshotData(_ data: Data, snapshotId: UUID) throws {
         try FileManager.default.createDirectory(at: artifactsURL, withIntermediateDirectories: true)
         try data.write(to: screenshotURL(snapshotId: snapshotId), options: .atomic)
-    }
-
-    public func screenshotData(snapshotId: UUID) throws -> Data? {
-        let url = screenshotURL(snapshotId: snapshotId)
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            return nil
-        }
-        return try Data(contentsOf: url)
     }
 
     private func screenshotURL(snapshotId: UUID) -> URL {
@@ -477,6 +466,9 @@ public final class ContextRepository: ContextRepositorying {
         var store = try loadStore()
         mutation(&store)
         try saveStore(store)
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .contextDataDidChange, object: nil)
+        }
     }
 
     private func loadStore() throws -> PersistedStore {

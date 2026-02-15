@@ -318,10 +318,7 @@ final class ContextLibraryController: NSViewController, NSOutlineViewDataSource,
         }
 
         do {
-            var renamed = context
-            renamed.title = newTitle
-            renamed.updatedAt = Date()
-            try repository.updateContext(renamed)
+            _ = try sessionManager.renameContext(context.id, title: newTitle)
             onSelectionChange("Renamed context")
             refreshData()
         } catch {
@@ -331,15 +328,6 @@ final class ContextLibraryController: NSViewController, NSOutlineViewDataSource,
 
     @objc private func deleteSelectedContext() {
         guard let context = selectedContext() else {
-            return
-        }
-        let alert = NSAlert()
-        alert.messageText = "Delete Context"
-        alert.informativeText = "Move \"\(context.title)\" and its snapshots to Trash?"
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "Delete")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else {
             return
         }
         do {

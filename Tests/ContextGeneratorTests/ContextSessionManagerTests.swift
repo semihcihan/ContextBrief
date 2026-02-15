@@ -171,4 +171,49 @@ final class ContextSessionManagerTests: XCTestCase {
         XCTAssertEqual(restored.title, "Named Context")
         XCTAssertEqual(try manager.currentContext().id, restored.id)
     }
+
+    func testDeleteTrashedSnapshotPermanentlyRemovesItem() throws {
+        let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let repo = ContextRepository(rootURL: tempRoot)
+        let manager = ContextSessionManager(repository: repo)
+        _ = try manager.createNewContext(title: "Context")
+
+        let capture = CapturedSnapshot(
+            sourceType: .desktopApp,
+            appName: "Notes",
+            bundleIdentifier: "com.apple.Notes",
+            windowTitle: "Notes",
+            captureMethod: .accessibility,
+            accessibilityText: "abc",
+            ocrText: "",
+            combinedText: "abc",
+            diagnostics: CaptureDiagnostics(
+                accessibilityLineCount: 1,
+                ocrLineCount: 0,
+                processingDurationMs: 40,
+                usedFallbackOCR: false
+            )
+        )
+        _ = try manager.appendSnapshot(rawCapture: capture, denseContent: "abc", provider: nil, model: nil)
+        _ = try manager.undoLastCaptureInCurrentContext()
+        let trashed = try manager.trashedSnapshots()
+
+        XCTAssertEqual(trashed.count, 1)
+        try manager.deleteTrashedSnapshotPermanently(trashed[0].id)
+        XCTAssertTrue(try manager.trashedSnapshots().isEmpty)
+    }
+
+    func testDeleteTrashedContextPermanentlyRemovesItem() throws {
+        let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let repo = ContextRepository(rootURL: tempRoot)
+        let manager = ContextSessionManager(repository: repo)
+        let context = try manager.createNewContext(title: "Named Context")
+
+        _ = try manager.deleteContextToTrash(context.id)
+        let trashed = try manager.trashedContexts()
+        XCTAssertEqual(trashed.count, 1)
+
+        try manager.deleteTrashedContextPermanently(trashed[0].id)
+        XCTAssertTrue(try manager.trashedContexts().isEmpty)
+    }
 }
