@@ -10,10 +10,17 @@ final class ShortcutRecorderControl: NSControl {
 
     var onShortcutRecorded: ((ShortcutBinding) -> Void)?
     var onRecordingError: ((String) -> Void)?
+    var onRecordingStateChanged: ((Bool) -> Void)?
+    var recording: Bool {
+        isRecording
+    }
 
     private let valueLabel = NSTextField(labelWithString: "")
     private var isRecording = false {
         didSet {
+            if oldValue != isRecording {
+                onRecordingStateChanged?(isRecording)
+            }
             refreshDisplay()
             refreshAppearance()
         }

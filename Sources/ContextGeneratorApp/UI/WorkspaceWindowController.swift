@@ -51,6 +51,7 @@ final class WorkspaceWindowController: NSWindowController {
         sessionManager: ContextSessionManager,
         onSetupComplete: @escaping () -> Void,
         onShortcutsUpdated: @escaping () -> [String],
+        onShortcutRecordingStateChanged: @escaping (Bool) -> Void,
         onSelectionChange: @escaping (String) -> Void,
         notificationCenter: NotificationCenter = .default
     ) {
@@ -62,7 +63,8 @@ final class WorkspaceWindowController: NSWindowController {
         )
         shortcutSettingsController = ShortcutSettingsViewController(
             appStateService: appStateService,
-            onShortcutsUpdated: onShortcutsUpdated
+            onShortcutsUpdated: onShortcutsUpdated,
+            onRecordingStateChanged: onShortcutRecordingStateChanged
         )
         contextLibraryController = ContextLibraryController(
             repository: repository,

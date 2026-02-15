@@ -1,5 +1,6 @@
 import AppKit
 import ContextGenerator
+import ServiceManagement
 
 final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let repository = ContextRepository()
@@ -37,15 +38,44 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
     private var separatorAfterActions: NSMenuItem?
     private var separatorAfterLibrary: NSMenuItem?
     private var globalHotkeyManager: GlobalHotkeyManager?
+    private var areGlobalHotkeysSuspended = false
     private var isCaptureInProgress = false
     private var deferredUndoForInFlightCapture = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppLogger.debug("App launch finished. debugLoggingEnabled=\(AppLogger.debugLoggingEnabled)")
+        configureLaunchAtLoginIfNeeded()
         setupMainMenu()
         setupStatusItem()
         setupGlobalHotkeys()
         ensureOnboarding()
+    }
+
+    private func configureLaunchAtLoginIfNeeded() {
+        do {
+            let state = try appStateService.state()
+            guard !state.launchAtLoginConfigured else {
+                return
+            }
+            switch SMAppService.mainApp.status {
+            case .enabled:
+                AppLogger.info("Launch at login already enabled")
+            case .notRegistered:
+                try SMAppService.mainApp.register()
+                AppLogger.info("Launch at login enabled")
+            case .requiresApproval:
+                AppLogger.info("Launch at login requires user approval in System Settings")
+            case .notFound:
+                AppLogger.error("Launch at login setup failed: app service not found")
+                return
+            @unknown default:
+                AppLogger.error("Launch at login setup failed: unknown service status")
+                return
+            }
+            try appStateService.markLaunchAtLoginConfigured()
+        } catch {
+            AppLogger.error("Failed to configure launch at login: \(error.localizedDescription)")
+        }
     }
 
     private func setupMainMenu() {
@@ -429,6 +459,9 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
             onShortcutsUpdated: { [weak self] in
                 self?.updateShortcutBindings() ?? []
             },
+            onShortcutRecordingStateChanged: { [weak self] isRecording in
+                self?.setGlobalHotkeysSuspended(isRecording)
+            },
             onSelectionChange: { [weak self] text in
                 self?.updateFeedback(text)
                 self?.refreshMenuState()
@@ -658,6 +691,29 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
         }
         updateFeedback("Shortcut unavailable: \(labels.joined(separator: ", "))")
         return labels
+    }
+
+    private func setGlobalHotkeysSuspended(_ suspended: Bool) {
+        guard let globalHotkeyManager else {
+            return
+        }
+        guard areGlobalHotkeysSuspended != suspended else {
+            return
+        }
+        areGlobalHotkeysSuspended = suspended
+        let failed = globalHotkeyManager.setSuspended(suspended)
+        guard !failed.isEmpty else {
+            return
+        }
+        let labels = failed.map {
+            switch $0 {
+            case .addSnapshot:
+                return "Add Snapshot"
+            case .copyCurrentContext:
+                return "Copy Current Context"
+            }
+        }
+        updateFeedback("Shortcut unavailable: \(labels.joined(separator: ", "))")
     }
 
     private func applyMenuShortcuts() {

@@ -42,6 +42,12 @@ public final class AppStateService {
         try repository.saveAppState(state)
     }
 
+    public func markLaunchAtLoginConfigured() throws {
+        var state = try repository.appState()
+        state.launchAtLoginConfigured = true
+        try repository.saveAppState(state)
+    }
+
     public func state() throws -> AppState {
         try repository.appState()
     }

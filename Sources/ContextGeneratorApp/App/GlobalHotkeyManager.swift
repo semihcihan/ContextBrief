@@ -24,6 +24,8 @@ final class GlobalHotkeyManager {
     private var hotKeyRefs: [Action: EventHotKeyRef] = [:]
     private var handlerRef: EventHandlerRef?
     private let onTrigger: (Action) -> Void
+    private var activeShortcuts: ShortcutPreferences = .defaultValue
+    private var isSuspended = false
 
     init(onTrigger: @escaping (Action) -> Void) {
         self.onTrigger = onTrigger
@@ -38,6 +40,11 @@ final class GlobalHotkeyManager {
     }
 
     func apply(shortcuts: ShortcutPreferences) -> [Action] {
+        activeShortcuts = shortcuts
+        guard !isSuspended else {
+            unregisterAll()
+            return []
+        }
         unregisterAll()
         if shortcuts.addSnapshot == shortcuts.copyCurrentContext {
             let _ = register(binding: shortcuts.addSnapshot, action: .addSnapshot)
@@ -54,6 +61,18 @@ final class GlobalHotkeyManager {
             }
         }
         return failed
+    }
+
+    func setSuspended(_ suspended: Bool) -> [Action] {
+        guard isSuspended != suspended else {
+            return []
+        }
+        isSuspended = suspended
+        guard !suspended else {
+            unregisterAll()
+            return []
+        }
+        return apply(shortcuts: activeShortcuts)
     }
 
     private func installHandler() {
