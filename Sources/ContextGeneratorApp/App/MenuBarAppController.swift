@@ -36,7 +36,6 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
     private var separatorAfterPrimary: NSMenuItem?
     private var separatorAfterActions: NSMenuItem?
     private var separatorAfterLibrary: NSMenuItem?
-    private var separatorAfterSettings: NSMenuItem?
     private var isCaptureInProgress = false
     private var deferredUndoForInFlightCapture = false
 
@@ -101,8 +100,8 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
         if let contextActionsHeadlineMenuItem {
             menu.addItem(contextActionsHeadlineMenuItem)
         }
-        addSnapshotMenuItem = addMenuItem("Add Snapshot to Context", action: #selector(captureContext), key: "c", menu: menu)
-        copyDenseMenuItem = addMenuItem("Copy Current Context", action: #selector(copyDenseCurrentContext), key: "d", menu: menu)
+        addSnapshotMenuItem = addMenuItem("Add Snapshot to Context", action: #selector(captureContext), key: "c", indentationLevel: 1, menu: menu)
+        copyDenseMenuItem = addMenuItem("Copy Current Context", action: #selector(copyDenseCurrentContext), key: "d", indentationLevel: 1, menu: menu)
         separatorAfterPrimary = .separator()
         if let separatorAfterPrimary {
             menu.addItem(separatorAfterPrimary)
@@ -113,23 +112,19 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
         if let snapshotActionsHeadlineMenuItem {
             menu.addItem(snapshotActionsHeadlineMenuItem)
         }
-        undoSnapshotMenuItem = addMenuItem("Delete Last Snapshot", action: #selector(undoLastCapture), key: "", menu: menu)
-        promoteSnapshotMenuItem = addMenuItem("Move Last Snapshot to New Context", action: #selector(promoteLastCapture), key: "", menu: menu)
-        newContextMenuItem = addMenuItem("Start New Context", action: #selector(startNewContext), key: "n", menu: menu)
+        undoSnapshotMenuItem = addMenuItem("Delete Last Snapshot", action: #selector(undoLastCapture), key: "", indentationLevel: 1, menu: menu)
+        promoteSnapshotMenuItem = addMenuItem("Move Last Snapshot to New Context", action: #selector(promoteLastCapture), key: "", indentationLevel: 1, menu: menu)
         separatorAfterActions = .separator()
         if let separatorAfterActions {
             menu.addItem(separatorAfterActions)
         }
+        newContextMenuItem = addMenuItem("Start New Context", action: #selector(startNewContext), key: "n", menu: menu)
         _ = addMenuItem("Open Context Library", action: #selector(openContextLibrary), key: "", menu: menu)
         separatorAfterLibrary = .separator()
         if let separatorAfterLibrary {
             menu.addItem(separatorAfterLibrary)
         }
         _ = addMenuItem("Settings", action: #selector(openSettings), key: "", menu: menu)
-        separatorAfterSettings = .separator()
-        if let separatorAfterSettings {
-            menu.addItem(separatorAfterSettings)
-        }
         _ = addMenuItem("Quit", action: #selector(quit), key: "", menu: menu)
 
         statusItem.menu = menu
@@ -138,9 +133,10 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
         refreshMenuState()
     }
 
-    private func addMenuItem(_ title: String, action: Selector, key: String, menu: NSMenu) -> NSMenuItem {
+    private func addMenuItem(_ title: String, action: Selector, key: String, indentationLevel: Int = 0, menu: NSMenu) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
         item.target = self
+        item.indentationLevel = indentationLevel
         menu.addItem(item)
         return item
     }
@@ -229,8 +225,8 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
         setHidden(snapshotActionsHeadlineMenuItem, hidden: hideActions)
         setHidden(undoSnapshotMenuItem, hidden: hideActions)
         setHidden(promoteSnapshotMenuItem, hidden: hideActions)
-        setHidden(newContextMenuItem, hidden: hideActions)
         setHidden(separatorAfterActions, hidden: hideActions)
+        setHidden(newContextMenuItem, hidden: !setupReady)
     }
 
     private func setHidden(_ item: NSMenuItem?, hidden: Bool) {
@@ -515,7 +511,7 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
         }
         item.attributedTitle = NSAttributedString(
             string: title,
-            attributes: [.foregroundColor: NSColor.secondaryLabelColor]
+            attributes: [.foregroundColor: NSColor.labelColor]
         )
     }
 
