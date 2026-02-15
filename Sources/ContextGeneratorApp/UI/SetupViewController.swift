@@ -1,7 +1,8 @@
 import AppKit
 import ContextGenerator
 
-final class SetupViewController: NSViewController {
+final class SetupViewController: NSViewController, NSTextFieldDelegate {
+
     private let permissionService: PermissionServicing
     private let appStateService: AppStateService
     private let onComplete: () -> Void
@@ -10,9 +11,12 @@ final class SetupViewController: NSViewController {
     private let modelField = NSTextField(string: "gpt-4.1-mini")
     private let keyField = NSSecureTextField(frame: .zero)
     private let infoLabel = NSTextField(labelWithString: "")
+    private let validationSpinner = NSProgressIndicator()
+    private let statusBalanceSpacer = NSView()
     private let requestPermissionsButton = NSButton(title: "Request Permissions", target: nil, action: nil)
     private let finishSetupButton = NSButton(title: "Finish Setup", target: nil, action: nil)
     private var setupValidationInProgress = false
+    private let defaultInfoMessage = "Accessibility + Screen Recording are required."
 
     init(
         permissionService: PermissionServicing,
@@ -37,6 +41,14 @@ final class SetupViewController: NSViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         setupUI()
+        refreshPermissionsStatus()
+        loadSavedProviderSelection()
+    }
+
+    override func viewWillAppear() {
+        super.viewWillAppear()
+        refreshPermissionsStatus()
+        loadSavedProviderSelection()
     }
 
     private func setupUI() {
@@ -58,6 +70,19 @@ final class SetupViewController: NSViewController {
             providerPopup.lastItem?.representedObject = provider.rawValue
         }
         providerPopup.selectItem(at: 0)
+        providerPopup.target = self
+        providerPopup.action = #selector(providerSelectionChanged)
+        modelField.delegate = self
+        modelField.target = self
+        modelField.action = #selector(inputFieldsChanged)
+        keyField.delegate = self
+        keyField.target = self
+        keyField.action = #selector(inputFieldsChanged)
+        validationSpinner.style = .spinning
+        validationSpinner.controlSize = .small
+        validationSpinner.isDisplayedWhenStopped = false
+        validationSpinner.translatesAutoresizingMaskIntoConstraints = false
+        statusBalanceSpacer.translatesAutoresizingMaskIntoConstraints = false
 
         let fieldColumn = NSStackView()
         fieldColumn.orientation = .vertical
@@ -80,9 +105,15 @@ final class SetupViewController: NSViewController {
         stack.addArrangedSubview(buttonColumn)
         stack.setCustomSpacing(12, after: buttonColumn)
 
-        infoLabel.stringValue = "Accessibility + Screen Recording are required."
+        infoLabel.stringValue = defaultInfoMessage
         infoLabel.alignment = .center
-        stack.addArrangedSubview(infoLabel)
+        let statusRow = NSStackView(views: [validationSpinner, infoLabel, statusBalanceSpacer])
+        statusRow.orientation = .horizontal
+        statusRow.spacing = 8
+        statusRow.alignment = .centerY
+        statusRow.distribution = .fill
+        statusRow.translatesAutoresizingMaskIntoConstraints = false
+        stack.addArrangedSubview(statusRow)
 
         view.addSubview(stack)
         NSLayoutConstraint.activate([
@@ -94,7 +125,11 @@ final class SetupViewController: NSViewController {
             buttonColumn.widthAnchor.constraint(equalToConstant: 240),
             requestPermissionsButton.widthAnchor.constraint(equalTo: finishSetupButton.widthAnchor),
             requestPermissionsButton.heightAnchor.constraint(equalToConstant: 30),
-            finishSetupButton.heightAnchor.constraint(equalTo: requestPermissionsButton.heightAnchor)
+            finishSetupButton.heightAnchor.constraint(equalTo: requestPermissionsButton.heightAnchor),
+            validationSpinner.widthAnchor.constraint(equalToConstant: 14),
+            validationSpinner.heightAnchor.constraint(equalToConstant: 14),
+            statusBalanceSpacer.widthAnchor.constraint(equalTo: validationSpinner.widthAnchor),
+            statusBalanceSpacer.heightAnchor.constraint(equalTo: validationSpinner.heightAnchor)
         ])
     }
 
@@ -120,8 +155,8 @@ final class SetupViewController: NSViewController {
 
     @objc private func requestPermissions() {
         permissionService.requestOnboardingPermissions()
-        let hasAll = permissionService.hasAccessibilityPermission() && permissionService.hasScreenRecordingPermission()
-        infoLabel.stringValue = hasAll
+        refreshPermissionsStatus()
+        infoLabel.stringValue = permissionService.hasAccessibilityPermission() && permissionService.hasScreenRecordingPermission()
             ? "Permissions granted."
             : "Grant both permissions in System Settings, then finish setup."
     }
@@ -130,6 +165,7 @@ final class SetupViewController: NSViewController {
         guard !setupValidationInProgress else {
             return
         }
+        view.window?.makeFirstResponder(nil)
         guard
             permissionService.hasAccessibilityPermission(),
             permissionService.hasScreenRecordingPermission()
@@ -147,45 +183,80 @@ final class SetupViewController: NSViewController {
         }
 
         let model = modelField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        let apiKey = keyField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !model.isEmpty, !apiKey.isEmpty else {
-            infoLabel.stringValue = "Model and API key are required."
+        guard !model.isEmpty else {
+            infoLabel.stringValue = "Model is required."
             return
         }
 
-        setSetupControlsEnabled(false)
+        let apiKeyForValidation = normalizedAPIKey(keyField.stringValue)
+        keyField.stringValue = apiKeyForValidation
         infoLabel.stringValue = "Validating model access..."
-        setupValidationInProgress = true
+        guard !apiKeyForValidation.isEmpty else {
+            infoLabel.stringValue = "API key is required."
+            return
+        }
+
+        setValidationInProgress(true)
+        updateActionAvailability()
 
         Task { [weak self] in
             guard let self else {
                 return
             }
             do {
-                try await self.validateProvider(provider: provider, model: model, apiKey: apiKey)
-                try self.appStateService.configureProvider(provider: provider, model: model, apiKey: apiKey)
+                try await self.validateProvider(provider: provider, model: model, apiKey: apiKeyForValidation)
+                try self.appStateService.configureProvider(
+                    provider: provider,
+                    model: model,
+                    apiKey: apiKeyForValidation
+                )
                 try self.appStateService.markOnboardingCompleted()
                 await MainActor.run {
-                    self.setupValidationInProgress = false
-                    self.setSetupControlsEnabled(true)
+                    self.setValidationInProgress(false)
+                    self.updateActionAvailability()
+                    self.infoLabel.stringValue = "Setup complete."
                     self.onComplete()
                 }
             } catch {
                 await MainActor.run {
-                    self.setupValidationInProgress = false
-                    self.setSetupControlsEnabled(true)
-                    self.infoLabel.stringValue = "Setup failed: \(error.localizedDescription)"
+                    self.setValidationInProgress(false)
+                    self.updateActionAvailability()
+                    self.infoLabel.stringValue = "Setup failed."
+                    self.presentSetupErrorAlert(error)
                 }
             }
         }
     }
 
-    private func setSetupControlsEnabled(_ enabled: Bool) {
-        providerPopup.isEnabled = enabled
-        modelField.isEnabled = enabled
-        keyField.isEnabled = enabled
-        requestPermissionsButton.isEnabled = enabled
-        finishSetupButton.isEnabled = enabled
+    private func setValidationInProgress(_ inProgress: Bool) {
+        setupValidationInProgress = inProgress
+        providerPopup.isEnabled = !inProgress
+        modelField.isEditable = !inProgress
+        keyField.isEditable = !inProgress
+        if inProgress {
+            validationSpinner.startAnimation(nil)
+            finishSetupButton.title = "Validating..."
+            return
+        }
+        validationSpinner.stopAnimation(nil)
+        finishSetupButton.title = "Finish Setup"
+    }
+
+    @objc private func inputFieldsChanged() {
+        updateActionAvailability()
+    }
+
+    func controlTextDidChange(_ notification: Notification) {
+        normalizeInputFields()
+        updateActionAvailability()
+    }
+
+    private func updateActionAvailability() {
+        let hasAllPermissions = permissionService.hasAccessibilityPermission() && permissionService.hasScreenRecordingPermission()
+        let hasModel = !modelField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasAPIKey = !keyField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        requestPermissionsButton.isEnabled = !setupValidationInProgress && !hasAllPermissions
+        finishSetupButton.isEnabled = !setupValidationInProgress && hasAllPermissions && hasModel && hasAPIKey
     }
 
     private func validateProvider(provider: ProviderName, model: String, apiKey: String) async throws {
@@ -200,6 +271,102 @@ final class SetupViewController: NSViewController {
             apiKey: apiKey,
             model: model
         )
+    }
+
+    private func loadSavedProviderSelection() {
+        do {
+            guard let selection = try appStateService.providerSelection() else {
+                applySavedAPIKey(for: currentSelectedProvider())
+                infoLabel.stringValue = defaultInfoMessage
+                updateActionAvailability()
+                return
+            }
+            selectProvider(selection.provider)
+            modelField.stringValue = selection.model
+            applySavedAPIKey(for: selection.provider)
+            infoLabel.stringValue = selection.hasAPIKey
+                ? "Saved setup loaded."
+                : "Saved provider/model found. Add an API key to complete setup."
+            updateActionAvailability()
+        } catch {
+            infoLabel.stringValue = defaultInfoMessage
+            updateActionAvailability()
+        }
+    }
+
+    private func selectProvider(_ provider: ProviderName) {
+        guard
+            let index = providerPopup.itemArray.firstIndex(where: {
+                ($0.representedObject as? String) == provider.rawValue
+            })
+        else {
+            return
+        }
+        providerPopup.selectItem(at: index)
+    }
+
+    @objc private func providerSelectionChanged() {
+        guard let provider = currentSelectedProvider() else {
+            return
+        }
+        applySavedAPIKey(for: provider)
+        let hasSavedKey = !keyField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        infoLabel.stringValue = hasSavedKey
+            ? "Saved setup loaded."
+            : "No saved API key for this provider."
+        updateActionAvailability()
+    }
+
+    private func currentSelectedProvider() -> ProviderName? {
+        guard
+            let selectedProviderRawValue = providerPopup.selectedItem?.representedObject as? String,
+            let provider = ProviderName(rawValue: selectedProviderRawValue)
+        else {
+            return nil
+        }
+        return provider
+    }
+
+    private func applySavedAPIKey(for provider: ProviderName?) {
+        guard let provider else {
+            keyField.stringValue = ""
+            return
+        }
+        let savedKey = (try? appStateService.apiKey(for: provider)) ?? nil
+        keyField.stringValue = normalizedAPIKey(savedKey ?? "")
+    }
+
+    private func normalizeInputFields() {
+        let normalizedKey = normalizedAPIKey(keyField.stringValue)
+        if keyField.stringValue != normalizedKey {
+            keyField.stringValue = normalizedKey
+        }
+    }
+
+    private func normalizedAPIKey(_ value: String) -> String {
+        value
+            .components(separatedBy: .newlines)
+            .joined()
+            .trimmingCharacters(in: .whitespaces)
+    }
+
+    private func refreshPermissionsStatus() {
+        let hasAllPermissions = permissionService.hasAccessibilityPermission() && permissionService.hasScreenRecordingPermission()
+        requestPermissionsButton.title = hasAllPermissions ? "Permissions Granted" : "Request Permissions"
+        updateActionAvailability()
+    }
+
+    private func presentSetupErrorAlert(_ error: Error) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Setup Failed"
+        alert.informativeText = error.localizedDescription
+        alert.addButton(withTitle: "OK")
+        if let window = view.window {
+            alert.beginSheetModal(for: window)
+            return
+        }
+        alert.runModal()
     }
 }
 

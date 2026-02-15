@@ -12,7 +12,7 @@ public enum CaptureMethod: String, Codable {
     case none
 }
 
-public struct Snapshot: Codable, Identifiable, Equatable {
+public struct Snapshot: Codable, Identifiable, Hashable {
     public let id: UUID
     public let contextId: UUID
     public let createdAt: Date
@@ -114,5 +114,13 @@ public struct Snapshot: Codable, Identifiable, Equatable {
         accessibilityLineCount = try container.decodeIfPresent(Int.self, forKey: .accessibilityLineCount) ?? 0
         ocrLineCount = try container.decodeIfPresent(Int.self, forKey: .ocrLineCount) ?? 0
         processingDurationMs = try container.decodeIfPresent(Int.self, forKey: .processingDurationMs) ?? 0
+    }
+
+    public static func == (lhs: Snapshot, rhs: Snapshot) -> Bool {
+        lhs.id == rhs.id
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
     }
 }

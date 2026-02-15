@@ -222,8 +222,10 @@ final class TrashLibraryController: NSViewController, NSTableViewDataSource, NST
         switch items[row] {
         case .context:
             rowMenu.addItem(withTitle: "Restore Context", action: #selector(restoreSelectedContext), keyEquivalent: "")
+            rowMenu.addItem(withTitle: "Delete Permanently", action: #selector(deleteSelectedContextPermanently), keyEquivalent: "")
         case .snapshot:
             rowMenu.addItem(withTitle: "Move To Current Context", action: #selector(restoreSelectedSnapshot), keyEquivalent: "")
+            rowMenu.addItem(withTitle: "Delete Permanently", action: #selector(deleteSelectedSnapshotPermanently), keyEquivalent: "")
         }
     }
 
@@ -259,6 +261,66 @@ final class TrashLibraryController: NSViewController, NSTableViewDataSource, NST
         } catch {
             onSelectionChange("Restore context failed: \(error.localizedDescription)")
         }
+    }
+
+    @objc private func deleteSelectedSnapshotPermanently() {
+        let selectedRow = tableView.selectedRow
+        guard selectedRow >= 0, selectedRow < items.count else {
+            return
+        }
+        guard case .snapshot(let item) = items[selectedRow] else {
+            return
+        }
+        guard
+            confirmPermanentDelete(
+                title: "Delete Snapshot Permanently",
+                message: "Permanently delete \"\(item.snapshot.title)\" from Trash? This cannot be undone."
+            )
+        else {
+            return
+        }
+        do {
+            try sessionManager.deleteTrashedSnapshotPermanently(item.id)
+            onSelectionChange("Deleted snapshot permanently")
+            refreshData()
+        } catch {
+            onSelectionChange("Permanent delete failed: \(error.localizedDescription)")
+        }
+    }
+
+    @objc private func deleteSelectedContextPermanently() {
+        let selectedRow = tableView.selectedRow
+        guard selectedRow >= 0, selectedRow < items.count else {
+            return
+        }
+        guard case .context(let item) = items[selectedRow] else {
+            return
+        }
+        guard
+            confirmPermanentDelete(
+                title: "Delete Context Permanently",
+                message: "Permanently delete \"\(item.context.title)\" and its snapshots from Trash? This cannot be undone."
+            )
+        else {
+            return
+        }
+        do {
+            try sessionManager.deleteTrashedContextPermanently(item.id)
+            onSelectionChange("Deleted context permanently")
+            refreshData()
+        } catch {
+            onSelectionChange("Permanent delete failed: \(error.localizedDescription)")
+        }
+    }
+
+    private func confirmPermanentDelete(title: String, message: String) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Delete Permanently")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     private func makeBadgeLabel(text: String) -> NSTextField {

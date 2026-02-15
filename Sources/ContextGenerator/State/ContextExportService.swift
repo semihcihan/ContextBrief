@@ -2,7 +2,6 @@ import Foundation
 
 public enum ExportMode {
     case dense
-    case raw
 }
 
 public final class ContextExportService {
@@ -20,12 +19,7 @@ public final class ContextExportService {
 
         let snapshots = try repository.snapshots(in: context.id)
         let body = snapshots.enumerated().map { index, snapshot in
-            switch mode {
-            case .dense:
-                return "[\(index + 1)] \(snapshot.denseContent)"
-            case .raw:
-                return "[\(index + 1)] \(snapshot.rawContent)"
-            }
+            "[\(index + 1)] \(snapshot.denseContent)"
         }.joined(separator: "\n\n")
 
         return [

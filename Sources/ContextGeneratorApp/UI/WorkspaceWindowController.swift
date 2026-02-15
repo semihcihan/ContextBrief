@@ -35,6 +35,8 @@ final class WorkspaceWindowController: NSWindowController {
     private let setupController: SetupViewController
     private let contextLibraryController: ContextLibraryController
     private let trashLibraryController: TrashLibraryController
+    private let notificationCenter: NotificationCenter
+    private var selectedSection: Section = .setup
 
     init(
         permissionService: PermissionServicing,
@@ -42,8 +44,10 @@ final class WorkspaceWindowController: NSWindowController {
         repository: ContextRepositorying,
         sessionManager: ContextSessionManager,
         onSetupComplete: @escaping () -> Void,
-        onSelectionChange: @escaping (String) -> Void
+        onSelectionChange: @escaping (String) -> Void,
+        notificationCenter: NotificationCenter = .default
     ) {
+        self.notificationCenter = notificationCenter
         setupController = SetupViewController(
             permissionService: permissionService,
             appStateService: appStateService,
@@ -79,6 +83,12 @@ final class WorkspaceWindowController: NSWindowController {
         window.contentViewController = splitController
         window.toolbarStyle = .unified
         super.init(window: window)
+        notificationCenter.addObserver(
+            self,
+            selector: #selector(handleContextDataDidChange),
+            name: .contextDataDidChange,
+            object: nil
+        )
 
         sidebarController.configure(
             items: Section.allCases.map { section in
@@ -98,12 +108,32 @@ final class WorkspaceWindowController: NSWindowController {
         fatalError("init(coder:) has not been implemented")
     }
 
+    deinit {
+        notificationCenter.removeObserver(self)
+    }
+
     func show(section: Section, sender: Any?) {
         select(section)
         presentWindowAsFrontmost(sender)
     }
 
+    func refreshVisibleSection() {
+        switch selectedSection {
+        case .setup:
+            return
+        case .contextLibrary:
+            contextLibraryController.refreshData()
+        case .trash:
+            trashLibraryController.refreshData()
+        }
+    }
+
+    @objc private func handleContextDataDidChange() {
+        refreshVisibleSection()
+    }
+
     private func select(_ section: Section) {
+        selectedSection = section
         sidebarController.select(index: section.rawValue)
         switch section {
         case .setup:

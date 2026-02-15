@@ -30,6 +30,8 @@ public enum ProviderClientFactory {
     }
 }
 
+private let providerRequestTimeoutSeconds: TimeInterval = 30
+
 private func providerRequestErrorMessage(from data: Data, fallback: String) -> String {
     guard
         let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -69,6 +71,27 @@ private func validatedResponseData(
     return data
 }
 
+private func requestData(
+    session: URLSession,
+    request: URLRequest,
+    providerName: String
+) async throws -> Data {
+    do {
+        let (data, response) = try await session.data(for: request)
+        return try validatedResponseData(data, response, providerName: providerName)
+    } catch let appError as AppError {
+        throw appError
+    } catch let urlError as URLError where urlError.code == .timedOut {
+        throw AppError.providerRequestFailed(
+            "\(providerName) request timed out. Check network access and try again."
+        )
+    } catch {
+        throw AppError.providerRequestFailed(
+            "Unable to reach \(providerName) API: \(error.localizedDescription)"
+        )
+    }
+}
+
 private func densificationPrompt(for request: DensificationRequest) -> String {
     [
         "You are compressing captured UI/context text.",
@@ -90,6 +113,7 @@ private struct OpenAIProviderClient: ProviderClient {
         let endpoint = URL(string: "https://api.openai.com/v1/chat/completions")!
         var urlRequest = URLRequest(url: endpoint)
         urlRequest.httpMethod = "POST"
+        urlRequest.timeoutInterval = providerRequestTimeoutSeconds
         urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
@@ -103,8 +127,7 @@ private struct OpenAIProviderClient: ProviderClient {
         ]
         urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (data, response) = try await session.data(for: urlRequest)
-        let validatedData = try validatedResponseData(data, response, providerName: "OpenAI")
+        let validatedData = try await requestData(session: session, request: urlRequest, providerName: "OpenAI")
         let json = try JSONSerialization.jsonObject(with: validatedData) as? [String: Any]
         let choices = json?["choices"] as? [[String: Any]]
         let message = choices?.first?["message"] as? [String: Any]
@@ -124,6 +147,7 @@ private struct AnthropicProviderClient: ProviderClient {
         let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
         var urlRequest = URLRequest(url: endpoint)
         urlRequest.httpMethod = "POST"
+        urlRequest.timeoutInterval = providerRequestTimeoutSeconds
         urlRequest.setValue(apiKey, forHTTPHeaderField: "x-api-key")
         urlRequest.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -141,8 +165,7 @@ private struct AnthropicProviderClient: ProviderClient {
         ]
         urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (data, response) = try await session.data(for: urlRequest)
-        let validatedData = try validatedResponseData(data, response, providerName: "Anthropic")
+        let validatedData = try await requestData(session: session, request: urlRequest, providerName: "Anthropic")
         let json = try JSONSerialization.jsonObject(with: validatedData) as? [String: Any]
         let content = json?["content"] as? [[String: Any]]
         let text = content?.first?["text"] as? String
@@ -161,6 +184,7 @@ private struct GeminiProviderClient: ProviderClient {
         let endpoint = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(model):generateContent?key=\(apiKey)")!
         var urlRequest = URLRequest(url: endpoint)
         urlRequest.httpMethod = "POST"
+        urlRequest.timeoutInterval = providerRequestTimeoutSeconds
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         let body: [String: Any] = [
@@ -177,8 +201,7 @@ private struct GeminiProviderClient: ProviderClient {
         ]
         urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (data, response) = try await session.data(for: urlRequest)
-        let validatedData = try validatedResponseData(data, response, providerName: "Gemini")
+        let validatedData = try await requestData(session: session, request: urlRequest, providerName: "Gemini")
         let json = try JSONSerialization.jsonObject(with: validatedData) as? [String: Any]
         let candidates = json?["candidates"] as? [[String: Any]]
         let content = candidates?.first?["content"] as? [String: Any]

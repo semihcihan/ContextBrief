@@ -1,6 +1,6 @@
 import Foundation
 
-public struct Context: Codable, Identifiable, Equatable {
+public struct Context: Codable, Identifiable, Equatable, Hashable {
     public let id: UUID
     public var title: String
     public let createdAt: Date

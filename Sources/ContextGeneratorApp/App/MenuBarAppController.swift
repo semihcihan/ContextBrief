@@ -549,9 +549,7 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
         )
 
         do {
-            var snapshot = result.snapshot
-            snapshot.title = snapshotTitle
-            try repository.updateSnapshot(snapshot)
+            let snapshot = try sessionManager.renameSnapshot(result.snapshot.id, title: snapshotTitle)
             AppLogger.debug("applyGeneratedNames snapshot title updated snapshotId=\(snapshot.id.uuidString) title=\(snapshot.title)")
         } catch {}
 
@@ -579,10 +577,7 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
             apiKey: config.2,
             fallback: fallback
         )
-        var renamed = context
-        renamed.title = title
-        renamed.updatedAt = Date()
-        try? repository.updateContext(renamed)
+        _ = try? sessionManager.renameContext(contextId, title: title)
         AppLogger.debug("applyGeneratedContextName updated contextId=\(contextId.uuidString) oldTitle=\(context.title) newTitle=\(title)")
     }
 }
