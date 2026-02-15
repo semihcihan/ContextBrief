@@ -1,5 +1,6 @@
 import AppKit
 import ContextGenerator
+import ServiceManagement
 
 final class SetupViewController: NSViewController, NSTextFieldDelegate {
 
@@ -14,6 +15,7 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
     private let infoLabel = NSTextField(labelWithString: "")
     private let validationSpinner = NSProgressIndicator()
     private let statusBalanceSpacer = NSView()
+    private let launchAtLoginCheckbox = NSButton(checkboxWithTitle: "Launch at login", target: nil, action: nil)
     private let requestPermissionsButton = NSButton(title: "Request Permissions", target: nil, action: nil)
     private let finishSetupButton = NSButton(title: "Finish Setup", target: nil, action: nil)
     private var setupValidationInProgress = false
@@ -44,12 +46,14 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
     override func viewDidLoad() {
         super.viewDidLoad()
         setupUI()
+        refreshLaunchAtLoginCheckbox()
         refreshPermissionsStatus()
         loadSavedProviderSelection()
     }
 
     override func viewWillAppear() {
         super.viewWillAppear()
+        refreshLaunchAtLoginCheckbox()
         refreshPermissionsStatus()
         loadSavedProviderSelection()
     }
@@ -95,6 +99,9 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
         fieldColumn.addArrangedSubview(labeledRow(label: "Model", view: modelField))
         fieldColumn.addArrangedSubview(labeledRow(label: "API Key", view: keyField))
         stack.addArrangedSubview(fieldColumn)
+        launchAtLoginCheckbox.target = self
+        launchAtLoginCheckbox.action = #selector(toggleLaunchAtLogin)
+        stack.addArrangedSubview(launchAtLoginCheckbox)
         stack.setCustomSpacing(12, after: fieldColumn)
 
         requestPermissionsButton.target = self
@@ -230,6 +237,26 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
                     self.presentSetupErrorAlert(error)
                 }
             }
+        }
+    }
+
+    @objc private func toggleLaunchAtLogin() {
+        let shouldEnable = launchAtLoginCheckbox.state == .on
+        do {
+            if shouldEnable {
+                if SMAppService.mainApp.status != .enabled {
+                    try SMAppService.mainApp.register()
+                }
+            } else {
+                if SMAppService.mainApp.status == .enabled || SMAppService.mainApp.status == .requiresApproval {
+                    try SMAppService.mainApp.unregister()
+                }
+            }
+            try appStateService.markLaunchAtLoginConfigured()
+            refreshLaunchAtLoginCheckbox()
+        } catch {
+            refreshLaunchAtLoginCheckbox()
+            infoLabel.stringValue = "Could not update launch at login."
         }
     }
 
@@ -407,6 +434,10 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
         let hasAllPermissions = permissionService.hasAccessibilityPermission() && permissionService.hasScreenRecordingPermission()
         requestPermissionsButton.title = hasAllPermissions ? "Permissions Granted" : "Request Permissions"
         updateActionAvailability()
+    }
+
+    private func refreshLaunchAtLoginCheckbox() {
+        launchAtLoginCheckbox.state = SMAppService.mainApp.status == .enabled ? .on : .off
     }
 
     private func presentSetupErrorAlert(_ error: Error) {

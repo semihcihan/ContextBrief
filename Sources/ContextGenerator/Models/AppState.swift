@@ -3,6 +3,7 @@ import Foundation
 public struct AppState: Codable, Equatable {
     public var currentContextId: UUID?
     public var onboardingCompleted: Bool
+    public var launchAtLoginConfigured: Bool
     public var selectedProvider: ProviderName?
     public var selectedModel: String?
     public var shortcuts: ShortcutPreferences
@@ -10,12 +11,14 @@ public struct AppState: Codable, Equatable {
     public init(
         currentContextId: UUID? = nil,
         onboardingCompleted: Bool = false,
+        launchAtLoginConfigured: Bool = false,
         selectedProvider: ProviderName? = nil,
         selectedModel: String? = nil,
         shortcuts: ShortcutPreferences = .defaultValue
     ) {
         self.currentContextId = currentContextId
         self.onboardingCompleted = onboardingCompleted
+        self.launchAtLoginConfigured = launchAtLoginConfigured
         self.selectedProvider = selectedProvider
         self.selectedModel = selectedModel
         self.shortcuts = shortcuts
@@ -24,6 +27,7 @@ public struct AppState: Codable, Equatable {
     enum CodingKeys: String, CodingKey {
         case currentContextId
         case onboardingCompleted
+        case launchAtLoginConfigured
         case selectedProvider
         case selectedModel
         case shortcuts
@@ -33,6 +37,7 @@ public struct AppState: Codable, Equatable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         currentContextId = try container.decodeIfPresent(UUID.self, forKey: .currentContextId)
         onboardingCompleted = try container.decodeIfPresent(Bool.self, forKey: .onboardingCompleted) ?? false
+        launchAtLoginConfigured = try container.decodeIfPresent(Bool.self, forKey: .launchAtLoginConfigured) ?? false
         selectedProvider = try container.decodeIfPresent(ProviderName.self, forKey: .selectedProvider)
         selectedModel = try container.decodeIfPresent(String.self, forKey: .selectedModel)
         shortcuts = try container.decodeIfPresent(ShortcutPreferences.self, forKey: .shortcuts) ?? .defaultValue

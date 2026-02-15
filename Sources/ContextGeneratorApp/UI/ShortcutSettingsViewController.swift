@@ -4,6 +4,7 @@ import ContextGenerator
 final class ShortcutSettingsViewController: NSViewController {
     private let appStateService: AppStateService
     private let onShortcutsUpdated: () -> [String]
+    private let onRecordingStateChanged: (Bool) -> Void
 
     private let addSnapshotRecorder = ShortcutRecorderControl()
     private let copyCurrentRecorder = ShortcutRecorderControl()
@@ -11,9 +12,14 @@ final class ShortcutSettingsViewController: NSViewController {
     private let infoLabel = NSTextField(labelWithString: "")
     private let resetDefaultsButton = NSButton(title: "Reset to Defaults", target: nil, action: nil)
 
-    init(appStateService: AppStateService, onShortcutsUpdated: @escaping () -> [String]) {
+    init(
+        appStateService: AppStateService,
+        onShortcutsUpdated: @escaping () -> [String],
+        onRecordingStateChanged: @escaping (Bool) -> Void
+    ) {
         self.appStateService = appStateService
         self.onShortcutsUpdated = onShortcutsUpdated
+        self.onRecordingStateChanged = onRecordingStateChanged
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -70,6 +76,12 @@ final class ShortcutSettingsViewController: NSViewController {
         }
         copyCurrentRecorder.onRecordingError = { [weak self] text in
             self?.setStatus(text, kind: .error)
+        }
+        addSnapshotRecorder.onRecordingStateChanged = { [weak self] _ in
+            self?.notifyRecordingStateChanged()
+        }
+        copyCurrentRecorder.onRecordingStateChanged = { [weak self] _ in
+            self?.notifyRecordingStateChanged()
         }
 
         resetDefaultsButton.target = self
@@ -165,5 +177,9 @@ final class ShortcutSettingsViewController: NSViewController {
     private func setStatus(_ text: String, kind: StatusKind) {
         infoLabel.stringValue = text
         infoLabel.textColor = kind == .error ? .systemRed : .secondaryLabelColor
+    }
+
+    private func notifyRecordingStateChanged() {
+        onRecordingStateChanged(addSnapshotRecorder.recording || copyCurrentRecorder.recording)
     }
 }
