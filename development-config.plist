@@ -9,6 +9,6 @@
     <key>thirdPartyContextTitleRefreshEvery</key>
     <integer>3</integer>
     <key>appleContextTitleRefreshEvery</key>
-    <integer>6</integer>
+    <integer>1</integer>
 </dict>
 </plist>
