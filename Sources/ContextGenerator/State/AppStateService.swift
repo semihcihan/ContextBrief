@@ -46,6 +46,16 @@ public final class AppStateService {
         try repository.appState()
     }
 
+    public func shortcuts() throws -> ShortcutPreferences {
+        try repository.appState().shortcuts
+    }
+
+    public func updateShortcuts(_ shortcuts: ShortcutPreferences) throws {
+        var state = try repository.appState()
+        state.shortcuts = shortcuts
+        try repository.saveAppState(state)
+    }
+
     public func providerSelection() throws -> ProviderSelection? {
         let state = try repository.appState()
         guard let provider = state.selectedProvider else {
