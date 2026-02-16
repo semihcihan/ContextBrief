@@ -39,9 +39,7 @@ let package = Package(
                 .product(name: "FirebaseCrashlytics", package: "firebase-ios-sdk")
             ],
             path: "Sources/ContextGeneratorApp",
-            resources: [
-                .copy("Resources/GoogleService-Info.plist")
-            ],
+            exclude: ["Resources"],
             linkerSettings: [
                 .linkedFramework("AppKit"),
                 .linkedFramework("ApplicationServices"),

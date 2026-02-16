@@ -66,7 +66,7 @@ dev:
 		--watch Sources \
 		--watch Package.swift \
 		--restart \
-		-- sh -ec 'pkill -x "$(APP_TARGET)" >/dev/null 2>&1 || true; exec env $(DEBUG_ENV) DEVELOPER_DIR=$(DEVELOPER_DIR) swift run $(APP_TARGET)'
+		-- sh -ec 'pkill -x "$(APP_TARGET)" >/dev/null 2>&1 || true; exec env $(DEBUG_ENV) GOOGLE_SERVICE_INFO_PLIST_PATH="$(CURDIR)/Sources/ContextGeneratorApp/Resources/GoogleService-Info.plist" DEVELOPER_DIR=$(DEVELOPER_DIR) swift run $(APP_TARGET)'
 
 dev-stop:
 	@pkill -9 -f "$(WATCH_PATTERN)" >/dev/null 2>&1 || true
@@ -80,12 +80,12 @@ log:
 release-app:
 	@env DEVELOPER_DIR=$(DEVELOPER_DIR) swift build -c release
 	@test -f "$(INFO_PLIST_TEMPLATE)" || { echo "Missing plist template: $(INFO_PLIST_TEMPLATE)"; exit 1; }
+	@rm -rf "$(APP_BUNDLE)"
 	@mkdir -p "$(APP_BUNDLE)/Contents/MacOS" "$(APP_BUNDLE_RESOURCES)" "$(APP_BUNDLE_FRAMEWORKS)"
 	@cp ".build/release/$(APP_TARGET)" "$(APP_BUNDLE_EXEC)"
 	@cp "Sources/ContextGeneratorApp/Resources/GoogleService-Info.plist" "$(APP_BUNDLE_RESOURCES)/GoogleService-Info.plist"
 	@cp "Sources/ContextGeneratorApp/Resources/config.plist" "$(APP_BUNDLE_RESOURCES)/config.plist"
 	@for bundle in .build/release/*.bundle; do [ -d "$$bundle" ] || continue; cp -R "$$bundle" "$(APP_BUNDLE_RESOURCES)/"; done
-	@for bundle in .build/release/*_$(APP_TARGET).bundle; do [ -d "$$bundle" ] || continue; cp -R "$$bundle" "$(APP_BUNDLE)/"; done
 	@for framework in .build/release/*.framework; do [ -d "$$framework" ] || continue; cp -R "$$framework" "$(APP_BUNDLE_FRAMEWORKS)/"; done
 	# Generate final Info.plist from template placeholders.
 	@sed \
