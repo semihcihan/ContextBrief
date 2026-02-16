@@ -16,6 +16,7 @@ jobs:
       APP_BUNDLE_NAME: ContextBrief
       APP_EXECUTABLE_NAME: ContextBrief
       DMG_PATH: .build/release/ContextBrief.dmg
+      HOMEBREW_TAP_REPO_TOKEN: ${{ secrets.HOMEBREW_TAP_REPO_TOKEN }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -67,10 +68,10 @@ jobs:
             ```
 
       - name: Update Homebrew tap cask
-        if: ${{ secrets.HOMEBREW_TAP_REPO_TOKEN != '' && vars.HOMEBREW_TAP_REPO != '' }}
+        if: ${{ env.HOMEBREW_TAP_REPO_TOKEN != '' && vars.HOMEBREW_TAP_REPO != '' }}
         env:
           TAP_REPO: ${{ vars.HOMEBREW_TAP_REPO }}
-          TAP_REPO_TOKEN: ${{ secrets.HOMEBREW_TAP_REPO_TOKEN }}
+          TAP_REPO_TOKEN: ${{ env.HOMEBREW_TAP_REPO_TOKEN }}
           TAG: ${{ steps.version.outputs.tag }}
           VERSION: ${{ steps.version.outputs.version }}
           SHA256: ${{ steps.sha.outputs.sha256 }}
