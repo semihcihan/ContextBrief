@@ -13,8 +13,7 @@ BUILD_NUMBER ?= 1
 MIN_MACOS_VERSION ?= 13.0
 LOG ?= 0
 DEBUG_ENV :=
-XCODE_APP ?= /Applications/Xcode_26.app
-DEVELOPER_DIR ?= $(XCODE_APP)/Contents/Developer
+DEVELOPER_DIR ?= $(shell xcode-select -p)
 
 ifneq (,$(filter log,$(MAKECMDGOALS)))
 LOG := 1
@@ -49,7 +48,7 @@ help:
 		'                                            Build release app and run it' \
 		'' \
 		'Config variables (override inline if needed):' \
-		'  XCODE_APP=/Applications/Xcode_26.app' \
+		'  DEVELOPER_DIR=$$(xcode-select -p)' \
 		'  VERSION=1.0.0 BUILD_NUMBER=1' \
 		'  BUNDLE_IDENTIFIER=com.semihcihan.contextgenerator'
 
