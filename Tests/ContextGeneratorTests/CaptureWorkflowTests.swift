@@ -31,6 +31,24 @@ private final class MockDensifier: Densifying {
     }
 }
 
+private final class FlakyDensifier: Densifying {
+    private(set) var calls = 0
+
+    func densify(snapshot: CapturedSnapshot, provider: ProviderName, model: String, apiKey: String) async throws -> String {
+        calls += 1
+        if calls == 1 {
+            throw AppError.providerRequestFailed("temporary provider error")
+        }
+        return "dense-after-retry"
+    }
+}
+
+private final class AlwaysFailingDensifier: Densifying {
+    func densify(snapshot: CapturedSnapshot, provider: ProviderName, model: String, apiKey: String) async throws -> String {
+        throw AppError.providerRequestFailed("provider unavailable")
+    }
+}
+
 private final class MockKeychain: KeychainServicing {
     private var map: [String: String] = [:]
     func set(_ value: String, for key: String) throws {
@@ -71,5 +89,66 @@ final class CaptureWorkflowTests: XCTestCase {
         let result = try await workflow.runCapture()
         XCTAssertEqual(result.snapshot.denseContent, "dense-output")
         XCTAssertEqual(try repo.snapshots(in: result.context.id).count, 1)
+    }
+
+    func testWorkflowRetriesOnceBeforePersistingReadySnapshot() async throws {
+        let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let repo = ContextRepository(rootURL: tempRoot)
+        let manager = ContextSessionManager(repository: repo)
+        let keychain = MockKeychain()
+        let densifier = FlakyDensifier()
+        let workflow = CaptureWorkflow(
+            captureService: MockCaptureService(),
+            sessionManager: manager,
+            repository: repo,
+            densificationService: densifier,
+            keychain: keychain
+        )
+
+        var state = try repo.appState()
+        state.onboardingCompleted = true
+        state.selectedProvider = .openai
+        state.selectedModel = "demo-model"
+        try repo.saveAppState(state)
+        try keychain.set("secret", for: "api.openai")
+        _ = try manager.createNewContext(title: "Current")
+
+        let result = try await workflow.runCapture()
+
+        XCTAssertEqual(densifier.calls, 2)
+        XCTAssertEqual(result.snapshot.status, .ready)
+        XCTAssertEqual(result.snapshot.retryCount, 1)
+        XCTAssertEqual(result.snapshot.denseContent, "dense-after-retry")
+    }
+
+    func testWorkflowPersistsFailedSnapshotWhenDensificationStillFails() async throws {
+        let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let repo = ContextRepository(rootURL: tempRoot)
+        let manager = ContextSessionManager(repository: repo)
+        let keychain = MockKeychain()
+        let workflow = CaptureWorkflow(
+            captureService: MockCaptureService(),
+            sessionManager: manager,
+            repository: repo,
+            densificationService: AlwaysFailingDensifier(),
+            keychain: keychain
+        )
+
+        var state = try repo.appState()
+        state.onboardingCompleted = true
+        state.selectedProvider = .openai
+        state.selectedModel = "demo-model"
+        try repo.saveAppState(state)
+        try keychain.set("secret", for: "api.openai")
+        _ = try manager.createNewContext(title: "Current")
+
+        let result = try await workflow.runCapture()
+        let storedSnapshots = try repo.snapshots(in: result.context.id)
+
+        XCTAssertEqual(storedSnapshots.count, 1)
+        XCTAssertEqual(result.snapshot.status, .failed)
+        XCTAssertEqual(result.snapshot.retryCount, 1)
+        XCTAssertEqual(result.snapshot.denseContent, "")
+        XCTAssertEqual(result.snapshot.failureMessage, "provider unavailable")
     }
 }

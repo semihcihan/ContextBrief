@@ -51,7 +51,11 @@ public final class ContextSessionManager {
         rawCapture: CapturedSnapshot,
         denseContent: String,
         provider: ProviderName?,
-        model: String?
+        model: String?,
+        status: SnapshotStatus = .ready,
+        failureMessage: String? = nil,
+        retryCount: Int = 0,
+        lastAttemptAt: Date? = nil
     ) throws -> Snapshot {
         let context = try currentContext()
         let sequence = (try repository.lastSnapshot(in: context.id)?.sequence ?? 0) + 1
@@ -71,10 +75,21 @@ public final class ContextSessionManager {
             model: model,
             accessibilityLineCount: rawCapture.diagnostics.accessibilityLineCount,
             ocrLineCount: rawCapture.diagnostics.ocrLineCount,
-            processingDurationMs: rawCapture.diagnostics.processingDurationMs
+            processingDurationMs: rawCapture.diagnostics.processingDurationMs,
+            status: status,
+            failureMessage: failureMessage,
+            retryCount: retryCount,
+            lastAttemptAt: lastAttemptAt
         )
         try repository.appendSnapshot(snapshot)
         return snapshot
+    }
+
+    public func hasFailedSnapshotsInCurrentContext() throws -> Bool {
+        guard let context = try currentContextIfExists() else {
+            return false
+        }
+        return try repository.snapshots(in: context.id).contains(where: { $0.status == .failed })
     }
 
     public func undoLastCaptureInCurrentContext() throws -> Snapshot {
@@ -106,7 +121,14 @@ public final class ContextSessionManager {
             ocrContent: last.ocrContent,
             denseContent: last.denseContent,
             provider: last.provider,
-            model: last.model
+            model: last.model,
+            accessibilityLineCount: last.accessibilityLineCount,
+            ocrLineCount: last.ocrLineCount,
+            processingDurationMs: last.processingDurationMs,
+            status: last.status,
+            failureMessage: last.failureMessage,
+            retryCount: last.retryCount,
+            lastAttemptAt: last.lastAttemptAt
         )
         try repository.appendSnapshot(promotedSnapshot)
         return newContext

@@ -9,6 +9,7 @@ public protocol ContextRepositorying {
     func createContext(title: String) throws -> Context
     func updateContext(_ context: Context) throws
 
+    func snapshot(id: UUID) throws -> Snapshot?
     func snapshots(in contextId: UUID) throws -> [Snapshot]
     func appendSnapshot(_ snapshot: Snapshot) throws
     func updateSnapshot(_ snapshot: Snapshot) throws
@@ -132,6 +133,10 @@ public final class ContextRepository: ContextRepositorying {
             }
             $0.contexts[index] = context
         }
+    }
+
+    public func snapshot(id: UUID) throws -> Snapshot? {
+        try readStore().snapshots.first(where: { $0.id == id })
     }
 
     public func snapshots(in contextId: UUID) throws -> [Snapshot] {
@@ -299,7 +304,11 @@ public final class ContextRepository: ContextRepositorying {
                 model: trashed.snapshot.model,
                 accessibilityLineCount: trashed.snapshot.accessibilityLineCount,
                 ocrLineCount: trashed.snapshot.ocrLineCount,
-                processingDurationMs: trashed.snapshot.processingDurationMs
+                processingDurationMs: trashed.snapshot.processingDurationMs,
+                status: trashed.snapshot.status,
+                failureMessage: trashed.snapshot.failureMessage,
+                retryCount: trashed.snapshot.retryCount,
+                lastAttemptAt: trashed.snapshot.lastAttemptAt
             )
             $0.snapshots.append(snapshot)
             $0.contexts[contextIndex].snapshotCount += 1
@@ -352,7 +361,11 @@ public final class ContextRepository: ContextRepositorying {
                 model: sourceSnapshot.model,
                 accessibilityLineCount: sourceSnapshot.accessibilityLineCount,
                 ocrLineCount: sourceSnapshot.ocrLineCount,
-                processingDurationMs: sourceSnapshot.processingDurationMs
+                processingDurationMs: sourceSnapshot.processingDurationMs,
+                status: sourceSnapshot.status,
+                failureMessage: sourceSnapshot.failureMessage,
+                retryCount: sourceSnapshot.retryCount,
+                lastAttemptAt: sourceSnapshot.lastAttemptAt
             )
             $0.snapshots[sourceIndex] = updatedSnapshot
             $0.contexts[targetContextIndex].snapshotCount += 1
@@ -395,7 +408,11 @@ public final class ContextRepository: ContextRepositorying {
                     model: snapshot.model,
                     accessibilityLineCount: snapshot.accessibilityLineCount,
                     ocrLineCount: snapshot.ocrLineCount,
-                    processingDurationMs: snapshot.processingDurationMs
+                    processingDurationMs: snapshot.processingDurationMs,
+                    status: snapshot.status,
+                    failureMessage: snapshot.failureMessage,
+                    retryCount: snapshot.retryCount,
+                    lastAttemptAt: snapshot.lastAttemptAt
                 )
             }
             let context = Context(

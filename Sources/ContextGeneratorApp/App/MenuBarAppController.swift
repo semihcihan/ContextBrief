@@ -13,6 +13,11 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
     private lazy var appStateService = AppStateService(repository: repository, keychain: keychain)
     private lazy var densificationService = DensificationService()
     private lazy var namingService = NamingService()
+    private lazy var snapshotRetryWorkflow = SnapshotRetryWorkflow(
+        repository: repository,
+        densificationService: densificationService,
+        keychain: keychain
+    )
     private lazy var workflow = CaptureWorkflow(
         captureService: captureService,
         sessionManager: sessionManager,
@@ -43,7 +48,7 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
     private var checkForUpdatesMenuItem: NSMenuItem?
     private var globalHotkeyManager: GlobalHotkeyManager?
     private var areGlobalHotkeysSuspended = false
-    private var isCaptureInProgress = false
+    private let captureProcessingQueue = CaptureProcessingQueue()
     private var deferredUndoForInFlightCapture = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -222,7 +227,7 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
             } ?? nil)
             let contextLabel = contextLabel(currentContext: currentContext, hasSnapshotInCurrent: hasSnapshotInCurrent)
             updateActionHeadlines(contextLabel: contextLabel, lastSnapshot: lastSnapshot)
-            setTopStatusLine(text: isCaptureInProgress ? "Processing new snapshot..." : nil)
+            setTopStatusLine(text: processingStatusText())
 
             if !setupReady {
                 if !state.onboardingCompleted {
@@ -246,7 +251,7 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
             newContextMenuItem?.isEnabled = setupReady && hasSnapshotInCurrent
             copyDenseMenuItem?.isEnabled = hasSnapshotInCurrent
             AppLogger.debug(
-                "refreshMenuState onboardingCompleted=\(state.onboardingCompleted) hasPermissions=\(hasPermissions) hasProviderConfiguration=\(hasProviderConfiguration) setupReady=\(setupReady) currentContextId=\(currentContext?.id.uuidString ?? "-") currentContextTitle=\(currentContext?.title ?? "-") hasSnapshotInCurrent=\(hasSnapshotInCurrent) captureInProgress=\(isCaptureInProgress) deferredUndo=\(deferredUndoForInFlightCapture)"
+                "refreshMenuState onboardingCompleted=\(state.onboardingCompleted) hasPermissions=\(hasPermissions) hasProviderConfiguration=\(hasProviderConfiguration) setupReady=\(setupReady) currentContextId=\(currentContext?.id.uuidString ?? "-") currentContextTitle=\(currentContext?.title ?? "-") hasSnapshotInCurrent=\(hasSnapshotInCurrent) captureInProgress=\(isCaptureInProgress) queuedCaptures=\(captureProcessingQueue.queuedCount) deferredUndo=\(deferredUndoForInFlightCapture)"
             )
             applySetupVisibility(setupReady: setupReady)
         } catch {
@@ -304,30 +309,49 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
     private func captureFrom(source: String) {
         AppLogger.debug("captureContext tapped")
         eventTracker.track(.captureRequested, parameters: ["source": source])
-        if isCaptureInProgress {
-            eventTracker.track(.captureBlocked, parameters: ["reason": "in_progress", "source": source])
-            updateFeedback("Snapshot already processing")
-            return
+        switch captureProcessingQueue.requestCapture(source: source) {
+        case .queued(let queuedCount):
+            eventTracker.track(
+                .captureBlocked,
+                parameters: [
+                    "reason": "queued",
+                    "source": source,
+                    "queued_count": queuedCount
+                ]
+            )
+            updateFeedback(queuedCount == 1 ? "Snapshot queued" : "\(queuedCount) snapshots queued")
+            AppLogger.info("Capture queued source=\(source) queuedCount=\(queuedCount)")
+            refreshMenuState()
+        case .startNow(let nextSource):
+            guard startCapture(source: nextSource) else {
+                captureProcessingQueue.markCurrentCaptureDidNotStart()
+                refreshMenuState()
+                return
+            }
         }
+    }
+
+    @discardableResult
+    private func startCapture(source: String) -> Bool {
         do {
             let state = try appStateService.state()
             guard state.onboardingCompleted else {
                 AppLogger.debug("captureContext blocked: onboarding not completed")
                 eventTracker.track(.captureBlocked, parameters: ["reason": "onboarding_incomplete", "source": source])
                 presentSettings(source: "capture_blocked")
-                return
+                return false
             }
             guard permissionService.hasAccessibilityPermission(), permissionService.hasScreenRecordingPermission() else {
                 AppLogger.debug("captureContext blocked: missing permissions")
                 eventTracker.track(.captureBlocked, parameters: ["reason": "permissions_missing", "source": source])
                 presentSettings(source: "capture_blocked")
-                return
+                return false
             }
             guard hasProviderConfiguration() else {
                 AppLogger.debug("captureContext blocked: provider configuration missing")
                 eventTracker.track(.captureBlocked, parameters: ["reason": "provider_not_configured", "source": source])
                 presentSettings(source: "capture_blocked")
-                return
+                return false
             }
         } catch {
             reportUnexpectedNonFatal(error, context: "capture_state_check")
@@ -339,12 +363,11 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
                     "error": String(describing: type(of: error))
                 ]
             )
-            return
+            return false
         }
 
-        AppLogger.info("Capture requested")
+        AppLogger.info("Capture requested source=\(source)")
         eventTracker.track(.captureStarted, parameters: ["source": source])
-        isCaptureInProgress = true
         refreshMenuState()
         Task {
             do {
@@ -354,10 +377,26 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
                 }
                 if removedInFlight {
                     await MainActor.run { [weak self] in
-                        self?.isCaptureInProgress = false
-                        self?.refreshMenuState()
+                        self?.completeCaptureAndStartNextIfNeeded()
                     }
                     AppLogger.info("Capture discarded due to deferred undo")
+                    return
+                }
+                if result.snapshot.status == .failed {
+                    eventTracker.track(
+                        .captureFailed,
+                        parameters: [
+                            "stage": "densification",
+                            "error": result.snapshot.failureMessage ?? "densification_failed"
+                        ]
+                    )
+                    updateFeedback("Snapshot failed. Open Context Library to retry or delete.")
+                    AppLogger.error(
+                        "Capture densification failed snapshotId=\(result.snapshot.id.uuidString) reason=\(result.snapshot.failureMessage ?? "-")"
+                    )
+                    await MainActor.run { [weak self] in
+                        self?.completeCaptureAndStartNextIfNeeded()
+                    }
                     return
                 }
                 AppLogger.debug("captureContext success snapshotId=\(result.snapshot.id.uuidString) contextId=\(result.context.id.uuidString)")
@@ -365,14 +404,12 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
                 updateFeedback("Snapshot added to \(result.context.title)")
                 await applyGeneratedNames(result)
                 await MainActor.run { [weak self] in
-                    self?.isCaptureInProgress = false
-                    self?.refreshMenuState()
+                    self?.completeCaptureAndStartNextIfNeeded()
                 }
                 AppLogger.info("Capture complete snapshot=\(result.snapshot.id.uuidString)")
             } catch {
                 reportUnexpectedNonFatal(error, context: "capture_workflow")
                 await MainActor.run { [weak self] in
-                    self?.isCaptureInProgress = false
                     self?.deferredUndoForInFlightCapture = false
                 }
                 if let appError = error as? AppError {
@@ -393,7 +430,26 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
                     ]
                 )
                 AppLogger.error("Capture failed: \(error.localizedDescription)")
+                await MainActor.run { [weak self] in
+                    self?.completeCaptureAndStartNextIfNeeded()
+                }
             }
+        }
+        return true
+    }
+
+    private func completeCaptureAndStartNextIfNeeded() {
+        let completion = captureProcessingQueue.completeCurrentCapture()
+        refreshMenuState()
+        guard case .startNext(let nextSource, let remainingQueued) = completion else {
+            return
+        }
+        AppLogger.info("Starting queued capture source=\(nextSource) remainingQueue=\(remainingQueued)")
+        guard startCapture(source: nextSource) else {
+            let droppedCount = captureProcessingQueue.dropQueuedCapturesAfterRejectedStart()
+            AppLogger.info("Discarding queued captures after failed queued start droppedCount=\(droppedCount)")
+            refreshMenuState()
+            return
         }
     }
 
@@ -499,6 +555,20 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
             refreshMenuState()
             return
         }
+        if hasFailedSnapshotsInCurrentContext() {
+            updateFeedback("Resolve failed snapshots before copying")
+            eventTracker.track(
+                .copyContextFailed,
+                parameters: [
+                    "mode": analyticsExportModeName(.dense),
+                    "source": source,
+                    "error": "failed_snapshot_in_current_context"
+                ]
+            )
+            workspaceWindowController().show(section: .contextLibrary, sender: self)
+            refreshMenuState()
+            return
+        }
         copyCurrentContext(mode: .dense)
     }
 
@@ -564,6 +634,12 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
             appStateService: appStateService,
             repository: repository,
             sessionManager: sessionManager,
+            onRetryFailedSnapshot: { [weak self] snapshotId in
+                guard let self else {
+                    throw CancellationError()
+                }
+                return try await self.snapshotRetryWorkflow.retryFailedSnapshot(snapshotId)
+            },
             onSetupComplete: { [weak self] in
                 self?.updateFeedback("Setup complete")
                 self?.refreshMenuState()
@@ -607,6 +683,20 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
         return hasSnapshotInCurrent ? currentContext.title : "Empty Context"
     }
 
+    private var isCaptureInProgress: Bool {
+        captureProcessingQueue.isCaptureInProgress
+    }
+
+    private func processingStatusText() -> String? {
+        guard isCaptureInProgress else {
+            return nil
+        }
+        guard captureProcessingQueue.queuedCount > 0 else {
+            return "Processing new snapshot..."
+        }
+        return "Processing new snapshot... (\(captureProcessingQueue.queuedCount) queued)"
+    }
+
     private func hasSnapshotsInCurrentContext() -> Bool {
         guard
             let context = ((try? sessionManager.currentContextIfExists()) ?? nil),
@@ -615,6 +705,10 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
             return false
         }
         return hasSnapshot
+    }
+
+    private func hasFailedSnapshotsInCurrentContext() -> Bool {
+        (try? sessionManager.hasFailedSnapshotsInCurrentContext()) ?? false
     }
 
     private func updateActionHeadlines(contextLabel: String, lastSnapshot: Snapshot?) {
