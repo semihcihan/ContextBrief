@@ -15,8 +15,16 @@ jobs:
       APP_TARGET: ContextBriefApp
       APP_BUNDLE_NAME: ContextBrief
       APP_EXECUTABLE_NAME: ContextBrief
+      APP_PATH: .build/release/ContextBrief.app
       DMG_PATH: .build/release/ContextBrief.dmg
       HOMEBREW_TAP_REPO_TOKEN: ${{ secrets.HOMEBREW_TAP_REPO_TOKEN }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      DEVELOPER_ID_CERT_BASE64: ${{ secrets.DEVELOPER_ID_CERT_BASE64 }}
+      DEVELOPER_ID_CERT_PASSWORD: ${{ secrets.DEVELOPER_ID_CERT_PASSWORD }}
+      APPSTORE_CONNECT_KEY_ID: ${{ secrets.APPSTORE_CONNECT_KEY_ID }}
+      APPSTORE_CONNECT_ISSUER_ID: ${{ secrets.APPSTORE_CONNECT_ISSUER_ID }}
+      APPSTORE_CONNECT_API_KEY_BASE64: ${{ secrets.APPSTORE_CONNECT_API_KEY_BASE64 }}
+      KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -30,11 +38,83 @@ jobs:
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "build_number=${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
 
-      - name: Build app bundle and DMG
+      - name: Validate notarization secrets
         run: |
-          make release-dmg \
+          test -n "${APPLE_TEAM_ID}" || { echo "Missing APPLE_TEAM_ID secret"; exit 1; }
+          test -n "${DEVELOPER_ID_CERT_BASE64}" || { echo "Missing DEVELOPER_ID_CERT_BASE64 secret"; exit 1; }
+          test -n "${DEVELOPER_ID_CERT_PASSWORD}" || { echo "Missing DEVELOPER_ID_CERT_PASSWORD secret"; exit 1; }
+          test -n "${APPSTORE_CONNECT_KEY_ID}" || { echo "Missing APPSTORE_CONNECT_KEY_ID secret"; exit 1; }
+          test -n "${APPSTORE_CONNECT_ISSUER_ID}" || { echo "Missing APPSTORE_CONNECT_ISSUER_ID secret"; exit 1; }
+          test -n "${APPSTORE_CONNECT_API_KEY_BASE64}" || { echo "Missing APPSTORE_CONNECT_API_KEY_BASE64 secret"; exit 1; }
+          test -n "${KEYCHAIN_PASSWORD}" || { echo "Missing KEYCHAIN_PASSWORD secret"; exit 1; }
+
+      - name: Install signing certificate and notary key
+        run: |
+          CERT_PATH="${RUNNER_TEMP}/developer_id_app.p12"
+          KEYCHAIN_PATH="${RUNNER_TEMP}/build.keychain-db"
+          API_KEY_PATH="${RUNNER_TEMP}/AuthKey_${APPSTORE_CONNECT_KEY_ID}.p8"
+
+          echo "${DEVELOPER_ID_CERT_BASE64}" | base64 --decode > "${CERT_PATH}"
+          echo "${APPSTORE_CONNECT_API_KEY_BASE64}" | base64 --decode > "${API_KEY_PATH}"
+
+          security create-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
+          security set-keychain-settings -lut 21600 "${KEYCHAIN_PATH}"
+          security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
+          security import "${CERT_PATH}" -P "${DEVELOPER_ID_CERT_PASSWORD}" -A -t cert -f pkcs12 -k "${KEYCHAIN_PATH}"
+          security list-keychains -d user -s "${KEYCHAIN_PATH}" login.keychain-db
+          security default-keychain -d user -s "${KEYCHAIN_PATH}"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
+
+      - name: Build app bundle
+        run: |
+          make release-app \
             VERSION="${{ steps.version.outputs.version }}" \
             BUILD_NUMBER="${{ steps.version.outputs.build_number }}"
+
+      - name: Sign app bundle
+        run: |
+          IDENTITY="$(security find-identity -v -p codesigning | awk -F\" '/Developer ID Application: .* \('"${APPLE_TEAM_ID}"'\)/ {print $2; exit}')"
+          test -n "${IDENTITY}" || { echo "Developer ID Application identity not found for team ${APPLE_TEAM_ID}"; exit 1; }
+          echo "Using signing identity: ${IDENTITY}"
+
+          if [ -d "${APP_PATH}/Contents/Frameworks" ]; then
+            find "${APP_PATH}/Contents/Frameworks" \( -name "*.framework" -o -name "*.dylib" -o -name "*.bundle" \) -print0 \
+              | while IFS= read -r -d '' item; do
+                  codesign --force --sign "${IDENTITY}" --timestamp --options runtime "${item}"
+                done
+          fi
+
+          if [ -d "${APP_PATH}/Contents/Resources" ]; then
+            find "${APP_PATH}/Contents/Resources" -name "*.bundle" -print0 \
+              | while IFS= read -r -d '' item; do
+                  codesign --force --sign "${IDENTITY}" --timestamp --options runtime "${item}"
+                done
+          fi
+
+          codesign --force --sign "${IDENTITY}" --timestamp --options runtime "${APP_PATH}"
+          codesign --verify --deep --strict --verbose=2 "${APP_PATH}"
+          spctl --assess --type execute --verbose=4 "${APP_PATH}"
+
+      - name: Build signed DMG
+        run: |
+          bash ./scripts/build_dmg.sh "${APP_PATH}" "${DMG_PATH}"
+
+      - name: Sign, notarize, and staple DMG
+        run: |
+          IDENTITY="$(security find-identity -v -p codesigning | awk -F\" '/Developer ID Application: .* \('"${APPLE_TEAM_ID}"'\)/ {print $2; exit}')"
+          API_KEY_PATH="${RUNNER_TEMP}/AuthKey_${APPSTORE_CONNECT_KEY_ID}.p8"
+
+          codesign --force --sign "${IDENTITY}" --timestamp "${DMG_PATH}"
+          codesign --verify --verbose=2 "${DMG_PATH}"
+
+          xcrun notarytool submit "${DMG_PATH}" \
+            --key "${API_KEY_PATH}" \
+            --key-id "${APPSTORE_CONNECT_KEY_ID}" \
+            --issuer "${APPSTORE_CONNECT_ISSUER_ID}" \
+            --wait
+
+          xcrun stapler staple "${DMG_PATH}"
+          xcrun stapler validate "${DMG_PATH}"
 
       - name: Compute DMG SHA256
         id: sha
@@ -53,13 +133,7 @@ jobs:
 
             1. Download `ContextBrief.dmg` from assets below.
             2. Open the DMG and drag `ContextBrief.app` into `/Applications`.
-            3. On first launch, macOS may block this unsigned build. Run:
-
-            ```bash
-            xattr -cr /Applications/ContextBrief.app
-            ```
-
-            Then right-click the app and choose `Open`.
+            3. Launch `ContextBrief`.
 
             Or install with Homebrew:
 
@@ -91,10 +165,6 @@ jobs:
             depends_on macos: ">= :ventura"
 
             app "ContextBrief.app"
-
-            postflight do
-              system_command "/usr/bin/xattr", args: ["-cr", "#{appdir}/ContextBrief.app"]
-            end
 
             zap trash: [
               "~/Library/Application Support/ContextBrief",
