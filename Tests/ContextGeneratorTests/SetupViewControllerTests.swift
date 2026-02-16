@@ -59,6 +59,17 @@ final class SetupViewControllerTests: XCTestCase {
         XCTAssertFalse(controller.testingKeyFieldEnabled())
     }
 
+    func testDefaultModelValueIsGpt5Nano() throws {
+        let (appStateService, _) = try makeAppStateService()
+        let controller = makeController(
+            appStateService: appStateService,
+            developmentConfig: DevelopmentConfig.shared
+        )
+        controller.loadViewIfNeeded()
+
+        XCTAssertEqual(controller.testingModelValue(), "gpt-5-nano")
+    }
+
     func testSelectingOlderProviderRestoresSavedModelAndKey() throws {
         let (appStateService, _) = try makeAppStateService()
         try appStateService.configureProvider(provider: .openai, model: "gpt-4.1-mini", apiKey: "sk-openai")
@@ -78,8 +89,78 @@ final class SetupViewControllerTests: XCTestCase {
         XCTAssertEqual(controller.testingSelectedProvider(), .openai)
         XCTAssertEqual(controller.testingModelValue(), "gpt-4.1-mini")
         XCTAssertEqual(controller.testingAPIKeyValue(), "sk-openai")
+        XCTAssertEqual(controller.testingInfoLabelValue(), "Ready to finish setup.")
         XCTAssertTrue(controller.testingModelFieldEnabled())
         XCTAssertTrue(controller.testingKeyFieldEnabled())
+    }
+
+    func testSelectingProviderWithoutSavedValuesClearsModelAndKey() throws {
+        let (appStateService, _) = try makeAppStateService()
+        try appStateService.configureProvider(provider: .openai, model: "gpt-4.1-mini", apiKey: "sk-openai")
+
+        let controller = makeController(
+            appStateService: appStateService,
+            developmentConfig: DevelopmentConfig.shared
+        )
+        controller.loadViewIfNeeded()
+        controller.testingSelectProvider(.gemini)
+
+        XCTAssertEqual(controller.testingSelectedProvider(), .gemini)
+        XCTAssertEqual(controller.testingModelValue(), "")
+        XCTAssertEqual(controller.testingAPIKeyValue(), "")
+        XCTAssertEqual(controller.testingInfoLabelValue(), "Enter model and API key to complete setup.")
+        XCTAssertTrue(controller.testingModelFieldEnabled())
+        XCTAssertTrue(controller.testingKeyFieldEnabled())
+    }
+
+    func testCompletedSetupLoadsWithNeutralInfoAndDisabledSaveChanges() throws {
+        let (appStateService, _) = try makeAppStateService()
+        try appStateService.configureProvider(provider: .openai, model: "gpt-4.1-mini", apiKey: "sk-openai")
+        try appStateService.markOnboardingCompleted()
+
+        let controller = makeController(
+            appStateService: appStateService,
+            developmentConfig: DevelopmentConfig.shared
+        )
+        controller.loadViewIfNeeded()
+
+        XCTAssertEqual(controller.testingInfoLabelValue(), "")
+        XCTAssertEqual(controller.testingFinishSetupButtonTitle(), "Save Changes")
+        XCTAssertFalse(controller.testingFinishSetupButtonEnabled())
+        XCTAssertTrue(controller.testingSetupCompleteBadgeVisible())
+    }
+
+    func testCompletedSetupEnablesSaveChangesWhenConfigurationBecomesDirty() throws {
+        let (appStateService, _) = try makeAppStateService()
+        try appStateService.configureProvider(provider: .openai, model: "gpt-4.1-mini", apiKey: "sk-openai")
+        try appStateService.markOnboardingCompleted()
+
+        let controller = makeController(
+            appStateService: appStateService,
+            developmentConfig: DevelopmentConfig.shared
+        )
+        controller.loadViewIfNeeded()
+        controller.testingSetModelValue("gpt-4.1")
+
+        XCTAssertEqual(controller.testingFinishSetupButtonTitle(), "Save Changes")
+        XCTAssertTrue(controller.testingFinishSetupButtonEnabled())
+        XCTAssertFalse(controller.testingSetupCompleteBadgeVisible())
+    }
+
+    func testIncompleteOnboardingUsesFinishSetupAndActionableInfo() throws {
+        let (appStateService, _) = try makeAppStateService()
+        try appStateService.configureProvider(provider: .openai, model: "gpt-4.1-mini", apiKey: "sk-openai")
+
+        let controller = makeController(
+            appStateService: appStateService,
+            developmentConfig: DevelopmentConfig.shared
+        )
+        controller.loadViewIfNeeded()
+
+        XCTAssertEqual(controller.testingInfoLabelValue(), "Ready to finish setup.")
+        XCTAssertEqual(controller.testingFinishSetupButtonTitle(), "Finish Setup")
+        XCTAssertTrue(controller.testingFinishSetupButtonEnabled())
+        XCTAssertFalse(controller.testingSetupCompleteBadgeVisible())
     }
 
     private func makeAppStateService() throws -> (AppStateService, ContextRepository) {
