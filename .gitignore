@@ -12,3 +12,5 @@ DerivedData/
 *.xcodeproj/project.xcworkspace/xcuserdata/
 *.xcuserdatad/
 *.xcuserstate
+
+.cursor/plans/

@@ -1,6 +1,6 @@
 import AppKit
 import ContextGenerator
-@testable import ContextGeneratorApp
+@testable import ContextBriefApp
 import XCTest
 
 private final class MockSetupPermissionService: PermissionServicing {
