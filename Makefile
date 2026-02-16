@@ -4,6 +4,8 @@
 # - Use `make release-dmg VERSION=x.y.z BUILD_NUMBER=n` for release artifacts.
 
 APP_TARGET := ContextBriefApp
+APP_BUNDLE_NAME ?= ContextBrief
+APP_EXECUTABLE_NAME ?= ContextBrief
 APP_DISPLAY_NAME ?= Context Brief
 BUNDLE_IDENTIFIER ?= com.semihcihan.contextgenerator
 VERSION ?= 1.0.0
@@ -24,12 +26,12 @@ endif
 
 .PHONY: help dev dev-stop log release-app release-dmg run-release-app
 WATCH_PATTERN := watchexec -e swift --watch Sources --watch Package.swift --restart -- .*swift run $(APP_TARGET)
-APP_BUNDLE := .build/release/$(APP_TARGET).app
-APP_BUNDLE_EXEC := $(APP_BUNDLE)/Contents/MacOS/$(APP_TARGET)
+APP_BUNDLE := .build/release/$(APP_BUNDLE_NAME).app
+APP_BUNDLE_EXEC := $(APP_BUNDLE)/Contents/MacOS/$(APP_EXECUTABLE_NAME)
 APP_BUNDLE_INFO := $(APP_BUNDLE)/Contents/Info.plist
 APP_BUNDLE_RESOURCES := $(APP_BUNDLE)/Contents/Resources
 INFO_PLIST_TEMPLATE := scripts/Info.plist.template
-DMG_NAME ?= $(APP_TARGET).dmg
+DMG_NAME ?= $(APP_BUNDLE_NAME).dmg
 DMG_OUTPUT ?= .build/release/$(DMG_NAME)
 
 # Show available developer/release commands.
@@ -83,7 +85,7 @@ release-app:
 	@cp "Sources/ContextGeneratorApp/Resources/GoogleService-Info.plist" "$(APP_BUNDLE_RESOURCES)/GoogleService-Info.plist"
 	# Generate final Info.plist from template placeholders.
 	@sed \
-		-e "s|__APP_NAME__|$(APP_TARGET)|g" \
+		-e "s|__APP_NAME__|$(APP_EXECUTABLE_NAME)|g" \
 		-e "s|__APP_DISPLAY_NAME__|$(APP_DISPLAY_NAME)|g" \
 		-e "s|__BUNDLE_IDENTIFIER__|$(BUNDLE_IDENTIFIER)|g" \
 		-e "s|__BUILD_NUMBER__|$(BUILD_NUMBER)|g" \
@@ -97,5 +99,5 @@ release-dmg: release-app
 
 # Build release app and run it locally (useful for quick release sanity checks).
 run-release-app: release-app
-	@pkill -x "$(APP_TARGET)" >/dev/null 2>&1 || true
+	@pkill -x "$(APP_EXECUTABLE_NAME)" >/dev/null 2>&1 || true
 	@exec env $(DEBUG_ENV) "$(APP_BUNDLE_EXEC)" -FIRDebugEnabled

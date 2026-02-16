@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_BUNDLE_PATH="${1:-.build/release/ContextBriefApp.app}"
-DMG_PATH="${2:-.build/release/ContextBriefApp.dmg}"
+APP_BUNDLE_PATH="${1:-.build/release/ContextBrief.app}"
+DMG_PATH="${2:-.build/release/ContextBrief.dmg}"
 
 if [[ ! -d "${APP_BUNDLE_PATH}" ]]; then
   echo "App bundle not found: ${APP_BUNDLE_PATH}"
