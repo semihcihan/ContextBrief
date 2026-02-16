@@ -1,0 +1,107 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    env:
+      APP_TARGET: ContextBriefApp
+      DMG_PATH: .build/release/ContextBriefApp.dmg
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve release version
+        id: version
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "build_number=${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+
+      - name: Build app bundle and DMG
+        run: |
+          make release-dmg \
+            VERSION="${{ steps.version.outputs.version }}" \
+            BUILD_NUMBER="${{ steps.version.outputs.build_number }}"
+
+      - name: Compute DMG SHA256
+        id: sha
+        run: |
+          echo "sha256=$(shasum -a 256 "${DMG_PATH}" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Context Brief ${{ steps.version.outputs.tag }}
+          tag_name: ${{ steps.version.outputs.tag }}
+          files: ${{ env.DMG_PATH }}
+          generate_release_notes: true
+          body: |
+            ## Installation
+
+            1. Download `ContextBriefApp.dmg` from assets below.
+            2. Open the DMG and drag `ContextBriefApp.app` into `/Applications`.
+            3. On first launch, macOS may block this unsigned build. Run:
+
+            ```bash
+            xattr -cr /Applications/ContextBriefApp.app
+            ```
+
+            Then right-click the app and choose `Open`.
+
+            Or install with Homebrew:
+
+            ```bash
+            brew install semihcihan/contextbrief/contextbrief
+            ```
+
+      - name: Update Homebrew tap cask
+        if: ${{ secrets.HOMEBREW_TAP_REPO_TOKEN != '' && vars.HOMEBREW_TAP_REPO != '' }}
+        env:
+          TAP_REPO: ${{ vars.HOMEBREW_TAP_REPO }}
+          TAP_REPO_TOKEN: ${{ secrets.HOMEBREW_TAP_REPO_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA256: ${{ steps.sha.outputs.sha256 }}
+        run: |
+          git clone "https://x-access-token:${TAP_REPO_TOKEN}@github.com/${TAP_REPO}.git" tap
+          mkdir -p tap/Casks
+          cat > tap/Casks/contextbrief.rb <<EOF
+          cask "contextbrief" do
+            version "${VERSION}"
+            sha256 "${SHA256}"
+
+            url "https://github.com/semihcihan/contextbrief/releases/download/${TAG}/ContextBriefApp.dmg"
+            name "Context Brief"
+            desc "Local-first macOS menu bar app for collecting and densifying context"
+            homepage "https://github.com/semihcihan/contextbrief"
+
+            depends_on macos: ">= :ventura"
+
+            app "ContextBriefApp.app"
+
+            postflight do
+              system_command "/usr/bin/xattr", args: ["-cr", "#{appdir}/ContextBriefApp.app"]
+            end
+
+            zap trash: [
+              "~/Library/Application Support/ContextBrief",
+              "~/Library/Preferences/com.semihcihan.contextgenerator.plist",
+            ]
+          end
+          EOF
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Casks/contextbrief.rb
+          git commit -m "Update contextbrief to ${TAG}" || echo "No tap changes to commit"
+          git push

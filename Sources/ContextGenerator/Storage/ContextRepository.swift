@@ -80,7 +80,7 @@ public final class ContextRepository: ContextRepositorying {
             rootURL
             ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-        self.rootURL = baseURL.appendingPathComponent("ContextGenerator", isDirectory: true)
+        self.rootURL = baseURL.appendingPathComponent("ContextBrief", isDirectory: true)
         storeURL = self.rootURL.appendingPathComponent("store.json")
         artifactsURL = self.rootURL.appendingPathComponent("artifacts", isDirectory: true)
 

@@ -93,7 +93,7 @@ final class WorkspaceWindowController: NSWindowController {
             backing: .buffered,
             defer: false
         )
-        window.title = "Context Generator"
+        window.title = "Context Brief"
         window.minSize = NSSize(width: 840, height: 520)
         window.contentViewController = splitController
         window.toolbarStyle = .unified

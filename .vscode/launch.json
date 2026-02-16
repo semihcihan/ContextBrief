@@ -4,21 +4,21 @@
       "type": "swift",
       "request": "launch",
       "args": [],
-      "cwd": "${workspaceFolder:context-generator}",
-      "name": "Debug ContextGeneratorApp",
-      "target": "ContextGeneratorApp",
+      "cwd": "${workspaceFolder:contextbrief}",
+      "name": "Debug ContextBriefApp",
+      "target": "ContextBriefApp",
       "configuration": "debug",
-      "preLaunchTask": "swift: Build Debug ContextGeneratorApp"
+      "preLaunchTask": "swift: Build Debug ContextBriefApp"
     },
     {
       "type": "swift",
       "request": "launch",
       "args": [],
-      "cwd": "${workspaceFolder:context-generator}",
-      "name": "Release ContextGeneratorApp",
-      "target": "ContextGeneratorApp",
+      "cwd": "${workspaceFolder:contextbrief}",
+      "name": "Release ContextBriefApp",
+      "target": "ContextBriefApp",
       "configuration": "release",
-      "preLaunchTask": "swift: Build Release ContextGeneratorApp"
+      "preLaunchTask": "swift: Build Release ContextBriefApp"
     }
   ]
 }
