@@ -40,6 +40,7 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
     private var separatorAfterPrimary: NSMenuItem?
     private var separatorAfterActions: NSMenuItem?
     private var separatorAfterLibrary: NSMenuItem?
+    private var checkForUpdatesMenuItem: NSMenuItem?
     private var globalHotkeyManager: GlobalHotkeyManager?
     private var areGlobalHotkeysSuspended = false
     private var isCaptureInProgress = false
@@ -53,6 +54,7 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
         setupStatusItem()
         setupGlobalHotkeys()
         ensureOnboarding()
+        UpdateChecker.shared.checkForUpdates(silent: true)
     }
 
     private func configureLaunchAtLoginIfNeeded() {
@@ -88,7 +90,7 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
 
         let appMenuItem = NSMenuItem()
         let appMenu = NSMenu()
-        appMenu.addItem(withTitle: "Quit Context Generator", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.addItem(withTitle: "Quit Context Brief", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appMenuItem.submenu = appMenu
         mainMenu.addItem(appMenuItem)
 
@@ -161,6 +163,7 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
         if let separatorAfterLibrary {
             menu.addItem(separatorAfterLibrary)
         }
+        checkForUpdatesMenuItem = addMenuItem("Check for Updates...", action: #selector(checkForUpdates), key: "", menu: menu)
         _ = addMenuItem("Settings", action: #selector(openSettings), key: "", menu: menu)
         _ = addMenuItem("Quit", action: #selector(quit), key: "", menu: menu)
         applyMenuShortcuts()
@@ -531,6 +534,10 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
 
     @objc private func openSettings() {
         presentSettings(source: "menu")
+    }
+
+    @objc private func checkForUpdates() {
+        UpdateChecker.shared.checkForUpdates()
     }
 
     private func presentSettings(source: String) {

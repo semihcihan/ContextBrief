@@ -8,7 +8,7 @@ public protocol KeychainServicing {
 }
 
 public final class KeychainService: KeychainServicing {
-    private let service = "ContextGenerator"
+    private let service = "ContextBrief"
 
     public init() {}
 

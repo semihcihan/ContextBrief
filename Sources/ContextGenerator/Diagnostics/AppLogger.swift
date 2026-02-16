@@ -2,7 +2,7 @@ import Foundation
 import os
 
 public enum AppLogger {
-    private static let logger = Logger(subsystem: "ContextGenerator", category: "Core")
+    private static let logger = Logger(subsystem: "ContextBrief", category: "Core")
     private static let debugEnvironmentKeys = [
         "CONTEXT_GENERATOR_DEBUG_LOGS",
         "CTX_DEBUG_LOGS"
@@ -31,7 +31,7 @@ public enum AppLogger {
     }
 
     public static var debugLoggingEnabled: Bool {
-        if UserDefaults.standard.bool(forKey: "ContextGenerator.DebugLogs") {
+        if UserDefaults.standard.bool(forKey: "ContextBrief.DebugLogs") {
             return true
         }
         return debugEnvironmentKeys.contains { key in

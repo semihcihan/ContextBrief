@@ -323,7 +323,7 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
         let client = ProviderClientFactory.make(provider: provider)
         let request = DensificationRequest(
             inputText: "Health check. Reply with OK.",
-            appName: "Context Generator",
+            appName: "Context Brief",
             windowTitle: "Setup Validation"
         )
         _ = try await client.densify(
