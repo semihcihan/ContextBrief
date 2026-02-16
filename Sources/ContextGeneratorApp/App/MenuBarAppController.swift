@@ -182,10 +182,11 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
     private func ensureOnboarding() {
         do {
             let state = try appStateService.state()
+            let setupReady = isSetupReady(state: state)
             AppLogger.debug(
-                "ensureOnboarding state onboardingCompleted=\(state.onboardingCompleted) provider=\(String(describing: state.selectedProvider?.rawValue)) model=\(String(describing: state.selectedModel))"
+                "ensureOnboarding state onboardingCompleted=\(state.onboardingCompleted) provider=\(String(describing: state.selectedProvider?.rawValue)) model=\(String(describing: state.selectedModel)) setupReady=\(setupReady)"
             )
-            if state.onboardingCompleted {
+            if setupReady {
                 refreshMenuState()
                 return
             }
@@ -206,8 +207,9 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
     private func refreshMenuState() {
         do {
             let state = try appStateService.state()
-            let hasPermissions = permissionService.hasAccessibilityPermission() && permissionService.hasScreenRecordingPermission()
-            let setupReady = state.onboardingCompleted && hasPermissions
+            let hasPermissions = hasAllRequiredPermissions()
+            let hasProviderConfiguration = hasProviderConfiguration()
+            let setupReady = isSetupReady(state: state)
             let currentContext = try sessionManager.currentContextIfExists()
             let hasSnapshotInCurrent = try (currentContext.map { context in
                 try repository.lastSnapshot(in: context.id) != nil
@@ -220,9 +222,15 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
             setTopStatusLine(text: isCaptureInProgress ? "Processing new snapshot..." : nil)
 
             if !setupReady {
-                setupStatusMenuItem?.title = state.onboardingCompleted
-                    ? "Permissions required: Accessibility + Screen Recording"
-                    : "Setup required: provider, model and API key"
+                if !state.onboardingCompleted {
+                    setupStatusMenuItem?.title = "Setup required: provider, model and API key"
+                } else if !hasPermissions {
+                    setupStatusMenuItem?.title = "Permissions required: Accessibility + Screen Recording"
+                } else if !hasProviderConfiguration {
+                    setupStatusMenuItem?.title = "Setup required: provider, model and API key"
+                } else {
+                    setupStatusMenuItem?.title = "Setup required: provider, model and API key"
+                }
             } else {
                 setupStatusMenuItem?.title = "Setup required"
             }
@@ -235,7 +243,7 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
             newContextMenuItem?.isEnabled = setupReady && hasSnapshotInCurrent
             copyDenseMenuItem?.isEnabled = hasSnapshotInCurrent
             AppLogger.debug(
-                "refreshMenuState onboardingCompleted=\(state.onboardingCompleted) hasPermissions=\(hasPermissions) setupReady=\(setupReady) currentContextId=\(currentContext?.id.uuidString ?? "-") currentContextTitle=\(currentContext?.title ?? "-") hasSnapshotInCurrent=\(hasSnapshotInCurrent) captureInProgress=\(isCaptureInProgress) deferredUndo=\(deferredUndoForInFlightCapture)"
+                "refreshMenuState onboardingCompleted=\(state.onboardingCompleted) hasPermissions=\(hasPermissions) hasProviderConfiguration=\(hasProviderConfiguration) setupReady=\(setupReady) currentContextId=\(currentContext?.id.uuidString ?? "-") currentContextTitle=\(currentContext?.title ?? "-") hasSnapshotInCurrent=\(hasSnapshotInCurrent) captureInProgress=\(isCaptureInProgress) deferredUndo=\(deferredUndoForInFlightCapture)"
             )
             applySetupVisibility(setupReady: setupReady)
         } catch {
@@ -274,6 +282,18 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
         item?.isHidden = hidden
     }
 
+    private func hasAllRequiredPermissions() -> Bool {
+        permissionService.hasAccessibilityPermission() && permissionService.hasScreenRecordingPermission()
+    }
+
+    private func hasProviderConfiguration() -> Bool {
+        ((try? configuredModelConfig()) ?? nil) != nil
+    }
+
+    private func isSetupReady(state: AppState) -> Bool {
+        state.onboardingCompleted && hasAllRequiredPermissions() && hasProviderConfiguration()
+    }
+
     @objc private func captureContext() {
         captureFrom(source: "menu")
     }
@@ -297,6 +317,12 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
             guard permissionService.hasAccessibilityPermission(), permissionService.hasScreenRecordingPermission() else {
                 AppLogger.debug("captureContext blocked: missing permissions")
                 eventTracker.track(.captureBlocked, parameters: ["reason": "permissions_missing", "source": source])
+                presentSettings(source: "capture_blocked")
+                return
+            }
+            guard hasProviderConfiguration() else {
+                AppLogger.debug("captureContext blocked: provider configuration missing")
+                eventTracker.track(.captureBlocked, parameters: ["reason": "provider_not_configured", "source": source])
                 presentSettings(source: "capture_blocked")
                 return
             }

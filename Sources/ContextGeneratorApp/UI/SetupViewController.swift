@@ -4,13 +4,19 @@ import ServiceManagement
 
 final class SetupViewController: NSViewController, NSTextFieldDelegate {
 
+    private struct SetupSnapshot: Equatable {
+        let provider: ProviderName?
+        let model: String
+        let apiKey: String
+    }
+
     private let permissionService: PermissionServicing
     private let appStateService: AppStateService
     private let developmentConfig: DevelopmentConfig
     private let onComplete: () -> Void
 
     private let providerPopup = NSPopUpButton(frame: .zero, pullsDown: false)
-    private let modelField = NSTextField(string: "gpt-4.1-mini")
+    private let modelField = NSTextField(string: "gpt-5-nano")
     private let keyField = NSSecureTextField(frame: .zero)
     private let infoLabel = NSTextField(labelWithString: "")
     private let validationSpinner = NSProgressIndicator()
@@ -18,7 +24,10 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
     private let launchAtLoginCheckbox = NSButton(checkboxWithTitle: "Launch at login", target: nil, action: nil)
     private let requestPermissionsButton = NSButton(title: "Request Permissions", target: nil, action: nil)
     private let finishSetupButton = NSButton(title: "Finish Setup", target: nil, action: nil)
+    private let setupCompleteBadge = NSTextField(labelWithString: "Setup complete")
     private var setupValidationInProgress = false
+    private var initialSnapshot: SetupSnapshot?
+    private var onboardingCompletedAtLoad = false
     private let defaultInfoMessage = "Accessibility + Screen Recording are required."
 
     init(
@@ -113,7 +122,14 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
         buttonColumn.spacing = 6
         buttonColumn.translatesAutoresizingMaskIntoConstraints = false
         stack.addArrangedSubview(buttonColumn)
-        stack.setCustomSpacing(12, after: buttonColumn)
+        stack.setCustomSpacing(6, after: buttonColumn)
+
+        setupCompleteBadge.alignment = .center
+        setupCompleteBadge.textColor = .secondaryLabelColor
+        setupCompleteBadge.font = .systemFont(ofSize: 11, weight: .medium)
+        setupCompleteBadge.isHidden = true
+        stack.addArrangedSubview(setupCompleteBadge)
+        stack.setCustomSpacing(12, after: setupCompleteBadge)
 
         infoLabel.stringValue = defaultInfoMessage
         infoLabel.alignment = .center
@@ -225,8 +241,10 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
                 try self.appStateService.markOnboardingCompleted()
                 await MainActor.run {
                     self.setValidationInProgress(false)
+                    self.onboardingCompletedAtLoad = true
+                    self.initialSnapshot = self.currentSnapshot()
                     self.updateActionAvailability()
-                    self.infoLabel.stringValue = "Setup complete."
+                    self.infoLabel.stringValue = ""
                     self.onComplete()
                 }
             } catch {
@@ -270,7 +288,7 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
             return
         }
         validationSpinner.stopAnimation(nil)
-        finishSetupButton.title = "Finish Setup"
+        updateFinishSetupButtonTitle()
     }
 
     @objc private func inputFieldsChanged() {
@@ -283,13 +301,22 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
     }
 
     private func updateActionAvailability() {
-        let hasAllPermissions = permissionService.hasAccessibilityPermission() && permissionService.hasScreenRecordingPermission()
-        let hasModel = !modelField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let hasAPIKey = !keyField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let requiresCredentials = currentSelectedProvider().map(providerRequiresCredentials) ?? true
-        let providerReady = requiresCredentials ? (hasModel && hasAPIKey) : true
+        let hasAllPermissions = hasAllPermissions()
+        let providerReady = providerConfigurationReady()
+        let configurationDirty = isConfigurationDirty()
         requestPermissionsButton.isEnabled = !setupValidationInProgress && !hasAllPermissions
-        finishSetupButton.isEnabled = !setupValidationInProgress && hasAllPermissions && providerReady
+        finishSetupButton.isEnabled = !setupValidationInProgress &&
+            hasAllPermissions &&
+            providerReady &&
+            (!onboardingCompletedAtLoad || configurationDirty)
+        if !setupValidationInProgress {
+            updateFinishSetupButtonTitle()
+        }
+        updateSetupCompleteBadgeVisibility(
+            hasAllPermissions: hasAllPermissions,
+            providerReady: providerReady,
+            configurationDirty: configurationDirty
+        )
     }
 
     private func validateProvider(provider: ProviderName, model: String, apiKey: String) async throws {
@@ -308,25 +335,25 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
 
     private func loadSavedProviderSelection() {
         do {
+            let state = try appStateService.state()
+            onboardingCompletedAtLoad = state.onboardingCompleted
             guard let selection = try appStateService.providerSelection() else {
                 applySavedModelAndAPIKey(for: currentSelectedProvider())
-                infoLabel.stringValue = defaultInfoMessage
+                initialSnapshot = currentSnapshot()
+                updateInfoLabelForLoadedState(selection: nil)
                 updateProviderFieldAvailability()
                 updateActionAvailability()
                 return
             }
             selectProvider(selection.provider)
             applySavedModelAndAPIKey(for: selection.provider, fallbackModel: selection.model)
-            if providerRequiresCredentials(selection.provider) {
-                infoLabel.stringValue = selection.hasAPIKey
-                    ? "Saved setup loaded."
-                    : "Saved provider/model found. Add an API key to complete setup."
-            } else {
-                infoLabel.stringValue = "Apple Foundation selected. Model and API key are not required."
-            }
+            initialSnapshot = currentSnapshot()
+            updateInfoLabelForLoadedState(selection: selection)
             updateProviderFieldAvailability()
             updateActionAvailability()
         } catch {
+            onboardingCompletedAtLoad = false
+            initialSnapshot = currentSnapshot()
             infoLabel.stringValue = defaultInfoMessage
             updateProviderFieldAvailability()
             updateActionAvailability()
@@ -360,17 +387,25 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
         guard let provider = currentSelectedProvider() else {
             return
         }
-        applySavedModelAndAPIKey(for: provider)
+        applySavedModelAndAPIKey(for: provider, fallbackModel: "")
         updateProviderFieldAvailability()
         if providerRequiresCredentials(provider) {
-            let hasSavedKey = !keyField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            infoLabel.stringValue = hasSavedKey
-                ? "Saved setup loaded."
-                : "Saved provider/model found. Add an API key to complete setup."
+            let hasModel = !normalizedModel(modelField.stringValue).isEmpty
+            let hasAPIKey = !normalizedAPIKey(keyField.stringValue).isEmpty
+            if hasModel && hasAPIKey {
+                infoLabel.stringValue = onboardingCompletedAtLoad ? "" : "Ready to finish setup."
+                updateActionAvailability()
+                return
+            }
+            infoLabel.stringValue = onboardingCompletedAtLoad
+                ? "Enter model and API key to save changes."
+                : "Enter model and API key to complete setup."
             updateActionAvailability()
             return
         }
-        infoLabel.stringValue = "Apple Foundation selected. Model and API key are not required."
+        infoLabel.stringValue = onboardingCompletedAtLoad
+            ? ""
+            : "Apple Foundation selected. Model and API key are not required."
         updateActionAvailability()
     }
 
@@ -397,6 +432,7 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
             keyField.stringValue = normalizedAPIKey(savedKey ?? "")
             return
         }
+        modelField.stringValue = ""
         keyField.stringValue = ""
     }
 
@@ -408,7 +444,7 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
         keyField.isEnabled = enabled && requiresCredentials
         keyField.isEditable = enabled && requiresCredentials
         if requiresCredentials {
-            modelField.placeholderString = "gpt-4.1-mini"
+            modelField.placeholderString = "gpt-5-nano"
             keyField.placeholderString = ""
             return
         }
@@ -430,8 +466,73 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
             .trimmingCharacters(in: .whitespaces)
     }
 
+    private func normalizedModel(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func hasAllPermissions() -> Bool {
+        permissionService.hasAccessibilityPermission() && permissionService.hasScreenRecordingPermission()
+    }
+
+    private func providerConfigurationReady() -> Bool {
+        let requiresCredentials = currentSelectedProvider().map(providerRequiresCredentials) ?? true
+        if !requiresCredentials {
+            return true
+        }
+        let hasModel = !normalizedModel(modelField.stringValue).isEmpty
+        let hasAPIKey = !normalizedAPIKey(keyField.stringValue).isEmpty
+        return hasModel && hasAPIKey
+    }
+
+    private func currentSnapshot() -> SetupSnapshot {
+        SetupSnapshot(
+            provider: currentSelectedProvider(),
+            model: normalizedModel(modelField.stringValue),
+            apiKey: normalizedAPIKey(keyField.stringValue)
+        )
+    }
+
+    private func isConfigurationDirty() -> Bool {
+        guard let initialSnapshot else {
+            return false
+        }
+        return currentSnapshot() != initialSnapshot
+    }
+
+    private func updateFinishSetupButtonTitle() {
+        finishSetupButton.title = onboardingCompletedAtLoad ? "Save Changes" : "Finish Setup"
+    }
+
+    private func updateSetupCompleteBadgeVisibility(
+        hasAllPermissions: Bool,
+        providerReady: Bool,
+        configurationDirty: Bool
+    ) {
+        setupCompleteBadge.isHidden = !(onboardingCompletedAtLoad && hasAllPermissions && providerReady && !configurationDirty)
+    }
+
+    private func updateInfoLabelForLoadedState(selection: AppStateService.ProviderSelection?) {
+        guard hasAllPermissions() else {
+            infoLabel.stringValue = defaultInfoMessage
+            return
+        }
+        guard let selection else {
+            infoLabel.stringValue = onboardingCompletedAtLoad ? "" : "Select provider, model, and API key to complete setup."
+            return
+        }
+        if providerRequiresCredentials(selection.provider) {
+            infoLabel.stringValue = selection.hasAPIKey
+                ? (onboardingCompletedAtLoad ? "" : "Ready to finish setup.")
+                : "Saved provider/model found. Add an API key to complete setup."
+            return
+        }
+        infoLabel.stringValue = onboardingCompletedAtLoad
+            ? ""
+            : "Apple Foundation selected. Model and API key are not required."
+    }
+
     private func refreshPermissionsStatus() {
-        let hasAllPermissions = permissionService.hasAccessibilityPermission() && permissionService.hasScreenRecordingPermission()
+        let hasAllPermissions = hasAllPermissions()
         requestPermissionsButton.title = hasAllPermissions ? "Permissions Granted" : "Request Permissions"
         updateActionAvailability()
     }
@@ -480,6 +581,32 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
 
     func testingAPIKeyValue() -> String {
         keyField.stringValue
+    }
+
+    func testingInfoLabelValue() -> String {
+        infoLabel.stringValue
+    }
+
+    func testingFinishSetupButtonTitle() -> String {
+        finishSetupButton.title
+    }
+
+    func testingFinishSetupButtonEnabled() -> Bool {
+        finishSetupButton.isEnabled
+    }
+
+    func testingSetupCompleteBadgeVisible() -> Bool {
+        !setupCompleteBadge.isHidden
+    }
+
+    func testingSetModelValue(_ value: String) {
+        modelField.stringValue = value
+        controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
+    }
+
+    func testingSetAPIKeyValue(_ value: String) {
+        keyField.stringValue = value
+        controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
     }
 }
 

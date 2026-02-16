@@ -160,7 +160,6 @@ private struct OpenAIProviderClient: ProviderClient {
 
         let body: [String: Any] = [
             "model": model,
-            "temperature": 0.1,
             "messages": messages
         ]
         urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body)
@@ -193,7 +192,6 @@ private struct AnthropicProviderClient: ProviderClient {
         var body: [String: Any] = [
             "model": model,
             "max_tokens": 1400,
-            "temperature": 0.1,
             "messages": [
                 [
                     "role": "user",
@@ -238,9 +236,6 @@ private struct GeminiProviderClient: ProviderClient {
                         ["text": request.prompt]
                     ]
                 ]
-            ],
-            "generationConfig": [
-                "temperature": 0.1
             ]
         ]
         if
