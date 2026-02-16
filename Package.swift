@@ -12,8 +12,8 @@ let package = Package(
             targets: ["ContextGenerator"]
         ),
         .executable(
-            name: "ContextGeneratorApp",
-            targets: ["ContextGeneratorApp"]
+            name: "ContextBriefApp",
+            targets: ["ContextBriefApp"]
         )
     ],
     dependencies: [
@@ -31,7 +31,7 @@ let package = Package(
             ]
         ),
         .executableTarget(
-            name: "ContextGeneratorApp",
+            name: "ContextBriefApp",
             dependencies: [
                 "ContextGenerator",
                 .product(name: "FirebaseCore", package: "firebase-ios-sdk"),
@@ -51,7 +51,7 @@ let package = Package(
         ),
         .testTarget(
             name: "ContextGeneratorTests",
-            dependencies: ["ContextGenerator", "ContextGeneratorApp"],
+            dependencies: ["ContextGenerator", "ContextBriefApp"],
             path: "Tests/ContextGeneratorTests"
         )
     ]

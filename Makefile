@@ -3,7 +3,7 @@
 # - Use `make dev` for local iterative development.
 # - Use `make release-dmg VERSION=x.y.z BUILD_NUMBER=n` for release artifacts.
 
-APP_TARGET := ContextGeneratorApp
+APP_TARGET := ContextBriefApp
 APP_BUNDLE_NAME ?= ContextBrief
 APP_EXECUTABLE_NAME ?= ContextBrief
 APP_DISPLAY_NAME ?= Context Brief
@@ -29,6 +29,7 @@ APP_BUNDLE := .build/release/$(APP_BUNDLE_NAME).app
 APP_BUNDLE_EXEC := $(APP_BUNDLE)/Contents/MacOS/$(APP_EXECUTABLE_NAME)
 APP_BUNDLE_INFO := $(APP_BUNDLE)/Contents/Info.plist
 APP_BUNDLE_RESOURCES := $(APP_BUNDLE)/Contents/Resources
+APP_BUNDLE_FRAMEWORKS := $(APP_BUNDLE)/Contents/Frameworks
 INFO_PLIST_TEMPLATE := scripts/Info.plist.template
 DMG_NAME ?= $(APP_BUNDLE_NAME).dmg
 DMG_OUTPUT ?= .build/release/$(DMG_NAME)
@@ -79,9 +80,11 @@ log:
 release-app:
 	@env DEVELOPER_DIR=$(DEVELOPER_DIR) swift build -c release
 	@test -f "$(INFO_PLIST_TEMPLATE)" || { echo "Missing plist template: $(INFO_PLIST_TEMPLATE)"; exit 1; }
-	@mkdir -p "$(APP_BUNDLE)/Contents/MacOS" "$(APP_BUNDLE_RESOURCES)"
+	@mkdir -p "$(APP_BUNDLE)/Contents/MacOS" "$(APP_BUNDLE_RESOURCES)" "$(APP_BUNDLE_FRAMEWORKS)"
 	@cp ".build/release/$(APP_TARGET)" "$(APP_BUNDLE_EXEC)"
 	@cp "Sources/ContextGeneratorApp/Resources/GoogleService-Info.plist" "$(APP_BUNDLE_RESOURCES)/GoogleService-Info.plist"
+	@for bundle in .build/release/*.bundle; do [ -d "$$bundle" ] || continue; cp -R "$$bundle" "$(APP_BUNDLE_RESOURCES)/"; done
+	@for framework in .build/release/*.framework; do [ -d "$$framework" ] || continue; cp -R "$$framework" "$(APP_BUNDLE_FRAMEWORKS)/"; done
 	# Generate final Info.plist from template placeholders.
 	@sed \
 		-e "s|__APP_NAME__|$(APP_EXECUTABLE_NAME)|g" \
