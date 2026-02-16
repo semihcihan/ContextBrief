@@ -3,7 +3,7 @@
 # - Use `make dev` for local iterative development.
 # - Use `make release-dmg VERSION=x.y.z BUILD_NUMBER=n` for release artifacts.
 
-APP_TARGET := ContextBriefApp
+APP_TARGET := ContextGeneratorApp
 APP_BUNDLE_NAME ?= ContextBrief
 APP_EXECUTABLE_NAME ?= ContextBrief
 APP_DISPLAY_NAME ?= Context Brief

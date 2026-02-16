@@ -94,7 +94,7 @@ final class SetupViewControllerTests: XCTestCase {
         XCTAssertTrue(controller.testingKeyFieldEnabled())
     }
 
-    func testSelectingProviderWithoutSavedValuesClearsModelAndKey() throws {
+    func testSelectingProviderWithoutSavedValuesUsesProviderDefaultModelAndClearsKey() throws {
         let (appStateService, _) = try makeAppStateService()
         try appStateService.configureProvider(provider: .openai, model: "gpt-4.1-mini", apiKey: "sk-openai")
 
@@ -106,7 +106,24 @@ final class SetupViewControllerTests: XCTestCase {
         controller.testingSelectProvider(.gemini)
 
         XCTAssertEqual(controller.testingSelectedProvider(), .gemini)
-        XCTAssertEqual(controller.testingModelValue(), "")
+        XCTAssertEqual(controller.testingModelValue(), "gemini-flash-latest")
+        XCTAssertEqual(controller.testingAPIKeyValue(), "")
+        XCTAssertEqual(controller.testingInfoLabelValue(), "Enter model and API key to complete setup.")
+        XCTAssertTrue(controller.testingModelFieldEnabled())
+        XCTAssertTrue(controller.testingKeyFieldEnabled())
+    }
+
+    func testSelectingAnthropicWithoutSavedValuesUsesAnthropicDefaultModel() throws {
+        let (appStateService, _) = try makeAppStateService()
+        let controller = makeController(
+            appStateService: appStateService,
+            developmentConfig: DevelopmentConfig.shared
+        )
+        controller.loadViewIfNeeded()
+        controller.testingSelectProvider(.anthropic)
+
+        XCTAssertEqual(controller.testingSelectedProvider(), .anthropic)
+        XCTAssertEqual(controller.testingModelValue(), "claude-haiku-4-5")
         XCTAssertEqual(controller.testingAPIKeyValue(), "")
         XCTAssertEqual(controller.testingInfoLabelValue(), "Enter model and API key to complete setup.")
         XCTAssertTrue(controller.testingModelFieldEnabled())
