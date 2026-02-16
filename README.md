@@ -34,16 +34,6 @@ brew install semihcihan/contextbrief/contextbrief
 2. Open the DMG and drag `ContextBrief.app` into `/Applications`.
 3. Launch `ContextBrief`.
 
-### IMPORTANT: macOS first-open step (one-time)
-
-If macOS blocks the app on first launch, run:
-
-```bash
-xattr -cr /Applications/ContextBrief.app
-```
-
-Then right-click the app and choose `Open`.
-
 ## First launch setup
 
 1. Grant permissions for capturing context:

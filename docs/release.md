@@ -3,7 +3,7 @@
 ## Release strategy
 - Distribution channels: GitHub Releases DMG and Homebrew Cask tap.
 - Update strategy: in-app GitHub release check that opens release page.
-- Signing strategy: unsigned-first.
+- Signing strategy: Developer ID signed + notarized DMG.
 
 ## Prerequisites
 - GitHub Actions enabled for this repository.
@@ -41,13 +41,7 @@ Verify artifacts:
    - Update Homebrew cask in tap repo (if configured)
 
 ## First-launch guidance for users
-Unsigned builds may trigger Gatekeeper warnings. Include this in release notes:
-
-```bash
-xattr -cr /Applications/ContextBrief.app
-```
-
-Then users can open the app via right-click -> `Open`.
+Signed and notarized builds should open directly after drag-and-drop install.
 
 ## Rollback
 If a bad release is published:
@@ -56,6 +50,4 @@ If a bad release is published:
 3. Confirm Homebrew cask points to the corrected tag and SHA256.
 
 ## Future hardening
-- Add Developer ID signing.
-- Add notarization and stapling.
-- Remove `xattr` workaround from release notes once notarized distribution is live.
+- Add automated verification checks against release artifacts on a clean machine.
