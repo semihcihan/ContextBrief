@@ -87,8 +87,6 @@ Until setup is complete, capture actions remain blocked.
   - `System Settings -> Privacy & Security -> Screen Recording`
 - Browser content may rely on OCR fallback depending on browser accessibility exposure.
 
-## For developers
+## License
 
-- Development and release commands are documented in `Makefile`.
-- Run `make help` for target descriptions.
-- Full release runbook: `docs/release.md`.
+MIT
