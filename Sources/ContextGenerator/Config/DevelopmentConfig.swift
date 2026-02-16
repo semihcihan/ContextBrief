@@ -6,7 +6,7 @@ import FoundationModels
 
 public struct DevelopmentConfig {
     public static let shared = DevelopmentConfig()
-    private static let defaultPlistFileName = "development-config.plist"
+    private static let defaultPlistFileName = "config.plist"
     private let appleFoundationAvailableOverride: Bool?
 
     public let enableAppleFoundationForTitleGeneration: Bool
@@ -91,8 +91,14 @@ public struct DevelopmentConfig {
         if let plistURL {
             return [plistURL]
         }
+        var candidates: [URL] = []
+        if let bundleConfigURL = Bundle.main.url(forResource: "config", withExtension: "plist") {
+            candidates.append(bundleConfigURL)
+        }
         let currentDirectoryURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
-        return [currentDirectoryURL.appendingPathComponent(defaultPlistFileName)]
+        candidates.append(currentDirectoryURL.appendingPathComponent("Sources/ContextGeneratorApp/Resources/\(defaultPlistFileName)"))
+        candidates.append(currentDirectoryURL.appendingPathComponent(defaultPlistFileName))
+        return candidates
     }
 }
 

@@ -83,7 +83,9 @@ release-app:
 	@mkdir -p "$(APP_BUNDLE)/Contents/MacOS" "$(APP_BUNDLE_RESOURCES)" "$(APP_BUNDLE_FRAMEWORKS)"
 	@cp ".build/release/$(APP_TARGET)" "$(APP_BUNDLE_EXEC)"
 	@cp "Sources/ContextGeneratorApp/Resources/GoogleService-Info.plist" "$(APP_BUNDLE_RESOURCES)/GoogleService-Info.plist"
+	@cp "Sources/ContextGeneratorApp/Resources/config.plist" "$(APP_BUNDLE_RESOURCES)/config.plist"
 	@for bundle in .build/release/*.bundle; do [ -d "$$bundle" ] || continue; cp -R "$$bundle" "$(APP_BUNDLE_RESOURCES)/"; done
+	@for bundle in .build/release/*_$(APP_TARGET).bundle; do [ -d "$$bundle" ] || continue; cp -R "$$bundle" "$(APP_BUNDLE)/"; done
 	@for framework in .build/release/*.framework; do [ -d "$$framework" ] || continue; cp -R "$$framework" "$(APP_BUNDLE_FRAMEWORKS)/"; done
 	# Generate final Info.plist from template placeholders.
 	@sed \

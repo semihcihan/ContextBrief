@@ -67,7 +67,7 @@ final class DevelopmentConfigTests: XCTestCase {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("DevelopmentConfigTests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let url = directory.appendingPathComponent("development-config.plist")
+        let url = directory.appendingPathComponent("config.plist")
         let wrote = (dictionary as NSDictionary).write(to: url, atomically: true)
         XCTAssertTrue(wrote)
         return url
