@@ -16,7 +16,7 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
     private let onComplete: () -> Void
 
     private let providerPopup = NSPopUpButton(frame: .zero, pullsDown: false)
-    private let modelField = NSTextField(string: "gpt-5-nano")
+    private let modelField = NSTextField(string: "")
     private let keyField = NSSecureTextField(frame: .zero)
     private let infoLabel = NSTextField(labelWithString: "")
     private let validationSpinner = NSProgressIndicator()
@@ -420,12 +420,14 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
     }
 
     private func applySavedModelAndAPIKey(for provider: ProviderName?, fallbackModel: String? = nil) {
+        let normalizedFallbackModel = fallbackModel?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallbackModelValue = (normalizedFallbackModel?.isEmpty == false) ? normalizedFallbackModel : nil
         guard let provider else {
-            modelField.stringValue = fallbackModel ?? modelField.stringValue
+            modelField.stringValue = fallbackModelValue ?? modelField.stringValue
             keyField.stringValue = ""
             return
         }
-        let savedModel = (try? appStateService.model(for: provider)) ?? fallbackModel ?? modelField.stringValue
+        let savedModel = (try? appStateService.model(for: provider)) ?? fallbackModelValue ?? defaultModel(for: provider)
         if providerRequiresCredentials(provider) {
             modelField.stringValue = savedModel
             let savedKey = (try? appStateService.apiKey(for: provider)) ?? nil
@@ -444,12 +446,25 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
         keyField.isEnabled = enabled && requiresCredentials
         keyField.isEditable = enabled && requiresCredentials
         if requiresCredentials {
-            modelField.placeholderString = "gpt-5-nano"
+            modelField.placeholderString = currentSelectedProvider().map(defaultModel) ?? defaultModel(for: .openai)
             keyField.placeholderString = ""
             return
         }
         modelField.placeholderString = "Not required for Apple Foundation"
         keyField.placeholderString = "Not required for Apple Foundation"
+    }
+
+    private func defaultModel(for provider: ProviderName) -> String {
+        switch provider {
+        case .openai:
+            return "gpt-5-nano"
+        case .anthropic:
+            return "claude-haiku-4-5"
+        case .gemini:
+            return "gemini-flash-latest"
+        case .apple:
+            return ""
+        }
     }
 
     private func normalizeInputFields() {
@@ -554,6 +569,9 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
         alert.runModal()
     }
 
+}
+
+extension SetupViewController {
     func testingProviderTitles() -> [String] {
         providerPopup.itemArray.map(\.title)
     }
