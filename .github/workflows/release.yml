@@ -13,7 +13,9 @@ jobs:
     runs-on: macos-15
     env:
       APP_TARGET: ContextBriefApp
-      DMG_PATH: .build/release/ContextBriefApp.dmg
+      APP_BUNDLE_NAME: ContextBrief
+      APP_EXECUTABLE_NAME: ContextBrief
+      DMG_PATH: .build/release/ContextBrief.dmg
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -48,12 +50,12 @@ jobs:
           body: |
             ## Installation
 
-            1. Download `ContextBriefApp.dmg` from assets below.
-            2. Open the DMG and drag `ContextBriefApp.app` into `/Applications`.
+            1. Download `ContextBrief.dmg` from assets below.
+            2. Open the DMG and drag `ContextBrief.app` into `/Applications`.
             3. On first launch, macOS may block this unsigned build. Run:
 
             ```bash
-            xattr -cr /Applications/ContextBriefApp.app
+            xattr -cr /Applications/ContextBrief.app
             ```
 
             Then right-click the app and choose `Open`.
@@ -80,17 +82,17 @@ jobs:
             version "${VERSION}"
             sha256 "${SHA256}"
 
-            url "https://github.com/semihcihan/contextbrief/releases/download/${TAG}/ContextBriefApp.dmg"
+            url "https://github.com/semihcihan/contextbrief/releases/download/${TAG}/ContextBrief.dmg"
             name "Context Brief"
             desc "Local-first macOS menu bar app for collecting and densifying context"
             homepage "https://github.com/semihcihan/contextbrief"
 
             depends_on macos: ">= :ventura"
 
-            app "ContextBriefApp.app"
+            app "ContextBrief.app"
 
             postflight do
-              system_command "/usr/bin/xattr", args: ["-cr", "#{appdir}/ContextBriefApp.app"]
+              system_command "/usr/bin/xattr", args: ["-cr", "#{appdir}/ContextBrief.app"]
             end
 
             zap trash: [

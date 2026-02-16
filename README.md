@@ -22,6 +22,16 @@ Context Brief is a macOS menu bar app that captures what you are working on, cle
 
 ## Install
 
+### macOS warning on first open (one-time)
+
+If macOS blocks the app on first launch (unsigned build), run this once:
+
+```bash
+xattr -cr /Applications/ContextBrief.app
+```
+
+Then right-click the app and choose `Open`.
+
 ### Option 1: Homebrew
 
 ```bash
@@ -30,17 +40,9 @@ brew install semihcihan/contextbrief/contextbrief
 
 ### Option 2: DMG
 
-1. Download `ContextBriefApp.dmg` from the latest GitHub release.
-2. Open the DMG and drag `ContextBriefApp.app` into `/Applications`.
-3. Launch `ContextBriefApp`.
-
-If macOS blocks the app on first launch (unsigned build), run:
-
-```bash
-xattr -cr /Applications/ContextBriefApp.app
-```
-
-Then right-click the app and choose `Open`.
+1. Download `ContextBrief.dmg` from the latest GitHub release.
+2. Open the DMG and drag `ContextBrief.app` into `/Applications`.
+3. Launch `ContextBrief`.
 
 ## First launch setup
 
@@ -84,14 +86,6 @@ Until setup is complete, capture actions remain blocked.
   - `System Settings -> Privacy & Security -> Accessibility`
   - `System Settings -> Privacy & Security -> Screen Recording`
 - Browser content may rely on OCR fallback depending on browser accessibility exposure.
-
-### App does not open because of macOS warning
-
-- Run:
-  ```bash
-  xattr -cr /Applications/ContextBriefApp.app
-  ```
-- Then open via right-click -> `Open`.
 
 ## For developers
 

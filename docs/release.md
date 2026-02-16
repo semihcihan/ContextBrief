@@ -22,8 +22,8 @@ make release-dmg VERSION=1.0.0 BUILD_NUMBER=1
 ```
 
 Verify artifacts:
-- `.build/release/ContextBriefApp.app`
-- `.build/release/ContextBriefApp.dmg`
+- `.build/release/ContextBrief.app`
+- `.build/release/ContextBrief.dmg`
 
 ## Release process
 1. Ensure `main` contains the desired release changes.
@@ -44,7 +44,7 @@ Verify artifacts:
 Unsigned builds may trigger Gatekeeper warnings. Include this in release notes:
 
 ```bash
-xattr -cr /Applications/ContextBriefApp.app
+xattr -cr /Applications/ContextBrief.app
 ```
 
 Then users can open the app via right-click -> `Open`.
