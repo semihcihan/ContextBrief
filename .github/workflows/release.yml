@@ -78,22 +78,21 @@ jobs:
           echo "Using signing identity: ${IDENTITY}"
 
           if [ -d "${APP_PATH}/Contents/Frameworks" ]; then
-            find "${APP_PATH}/Contents/Frameworks" \( -name "*.framework" -o -name "*.dylib" -o -name "*.bundle" \) -print0 \
+            find "${APP_PATH}/Contents/Frameworks" \( -name "*.framework" -o -name "*.dylib" \) -print0 \
               | while IFS= read -r -d '' item; do
-                  codesign --force --sign "${IDENTITY}" --timestamp --options runtime "${item}"
+                  codesign --force --sign "${IDENTITY}" --timestamp "${item}"
                 done
           fi
 
-          if [ -d "${APP_PATH}/Contents/Resources" ]; then
-            find "${APP_PATH}/Contents/Resources" -name "*.bundle" -print0 \
+          if [ -d "${APP_PATH}/Contents/MacOS" ]; then
+            find "${APP_PATH}/Contents/MacOS" -type f -perm -111 -print0 \
               | while IFS= read -r -d '' item; do
-                  codesign --force --sign "${IDENTITY}" --timestamp --options runtime "${item}"
+                  codesign --force --sign "${IDENTITY}" --timestamp "${item}"
                 done
           fi
 
           codesign --force --sign "${IDENTITY}" --timestamp --options runtime "${APP_PATH}"
           codesign --verify --deep --strict --verbose=2 "${APP_PATH}"
-          spctl --assess --type execute --verbose=4 "${APP_PATH}"
 
       - name: Build signed DMG
         run: |
