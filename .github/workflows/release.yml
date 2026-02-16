@@ -76,6 +76,8 @@ jobs:
           IDENTITY="$(security find-identity -v -p codesigning | awk -F\" '/Developer ID Application: .* \('"${APPLE_TEAM_ID}"'\)/ {print $2; exit}')"
           test -n "${IDENTITY}" || { echo "Developer ID Application identity not found for team ${APPLE_TEAM_ID}"; exit 1; }
           echo "Using signing identity: ${IDENTITY}"
+          EXTRA_ROOT_ENTRIES="$(find "${APP_PATH}" -mindepth 1 -maxdepth 1 ! -name Contents -print)"
+          test -z "${EXTRA_ROOT_ENTRIES}" || { echo "Unexpected app root entries that break signing:"; echo "${EXTRA_ROOT_ENTRIES}"; exit 1; }
 
           if [ -d "${APP_PATH}/Contents/Frameworks" ]; then
             find "${APP_PATH}/Contents/Frameworks" \( -name "*.framework" -o -name "*.dylib" \) -print0 \
