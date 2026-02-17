@@ -230,6 +230,7 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
             let failedSnapshotCount = snapshotsInCurrent.filter { $0.status == .failed }.count
             let contextLabel = contextLabel(currentContext: currentContext, hasSnapshotInCurrent: hasSnapshotInCurrent)
             updateActionHeadlines(contextLabel: contextLabel, lastSnapshot: lastSnapshot)
+            statusItem?.button?.title = statusItemTitle()
             setTopStatusLine(text: processingStatusText())
 
             if !setupReady {
@@ -777,6 +778,10 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
 
     private var isAnyProcessing: Bool {
         isCaptureInProgress || activeRetryOperations > 0
+    }
+
+    private func statusItemTitle() -> String {
+        isAnyProcessing ? "Ctx..." : "Ctx"
     }
 
     private func processingStatusText() -> String? {
