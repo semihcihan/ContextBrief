@@ -653,6 +653,7 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
             let text = try exportService.exportText(contextId: context.id, mode: mode)
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(text, forType: .string)
+            attemptPasteCurrentClipboard()
             eventTracker.track(
                 .copyContextSucceeded,
                 parameters: [
@@ -674,6 +675,29 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
             AppLogger.error("copyCurrentContext failed: \(error.localizedDescription)")
             updateFeedback("Copy failed")
             AppLogger.error("Copy failed: \(error.localizedDescription)")
+        }
+    }
+
+    private func attemptPasteCurrentClipboard() {
+        guard permissionService.hasAccessibilityPermission() else {
+            AppLogger.debug("attemptPasteCurrentClipboard skipped: missing accessibility permission")
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            let keyCode: CGKeyCode = 9
+            let source = CGEventSource(stateID: .combinedSessionState)
+            guard
+                let keyDown = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true),
+                let keyUp = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false)
+            else {
+                AppLogger.error("attemptPasteCurrentClipboard failed: unable to create keyboard events")
+                return
+            }
+            keyDown.flags = .maskCommand
+            keyUp.flags = .maskCommand
+            keyDown.post(tap: .cghidEventTap)
+            keyUp.post(tap: .cghidEventTap)
+            AppLogger.debug("attemptPasteCurrentClipboard posted command+v")
         }
     }
 
