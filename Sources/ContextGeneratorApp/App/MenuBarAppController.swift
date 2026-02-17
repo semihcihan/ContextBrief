@@ -321,30 +321,52 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
     private func captureFrom(source: String) {
         AppLogger.debug("captureContext tapped")
         eventTracker.track(.captureRequested, parameters: ["source": source])
-        switch captureProcessingQueue.requestCapture(source: source) {
-        case .queued(let queuedCount):
+
+        guard canCapture(source: source) else {
+            refreshMenuState()
+            return
+        }
+
+        let queuedRequest: QueuedCaptureRequest
+        do {
+            let (capturedSnapshot, screenshotData) = try captureService.capture()
+            queuedRequest = QueuedCaptureRequest(
+                source: source,
+                capturedSnapshot: capturedSnapshot,
+                screenshotData: screenshotData
+            )
+        } catch {
+            reportUnexpectedNonFatal(error, context: "capture_snapshot")
+            if let appError = error as? AppError {
+                updateFeedback("Snapshot failed: \(appError.localizedDescription)")
+            } else {
+                updateFeedback("Snapshot failed: \(error.localizedDescription)")
+            }
             eventTracker.track(
-                .captureBlocked,
+                .captureFailed,
                 parameters: [
-                    "reason": "queued",
-                    "source": source,
-                    "queued_count": queuedCount
+                    "stage": "capture",
+                    "error": analyticsErrorCode(error)
                 ]
             )
-            updateFeedback(queuedCount == 1 ? "Snapshot queued" : "\(queuedCount) snapshots queued")
-            AppLogger.info("Capture queued source=\(source) queuedCount=\(queuedCount)")
+            AppLogger.error("Capture snapshot failed source=\(source) error=\(error.localizedDescription)")
             refreshMenuState()
-        case .startNow(let nextSource):
-            guard startCapture(source: nextSource) else {
-                captureProcessingQueue.markCurrentCaptureDidNotStart()
-                refreshMenuState()
-                return
-            }
+            return
+        }
+
+        switch captureProcessingQueue.requestCapture(queuedRequest) {
+        case .queued(let queuedCount):
+            updateFeedback(queuedCount == 1 ? "Snapshot queued for processing" : "\(queuedCount) snapshots queued for processing")
+            AppLogger.info(
+                "Capture queued source=\(source) queuedCount=\(queuedCount) capturedSnapshot=\(queuedRequest.capturedSnapshot.id.uuidString)"
+            )
+            refreshMenuState()
+        case .startNow(let request):
+            startCaptureProcessing(request)
         }
     }
 
-    @discardableResult
-    private func startCapture(source: String) -> Bool {
+    private func canCapture(source: String) -> Bool {
         do {
             let state = try appStateService.state()
             guard state.onboardingCompleted else {
@@ -377,13 +399,21 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
             )
             return false
         }
+        return true
+    }
 
-        AppLogger.info("Capture requested source=\(source)")
-        eventTracker.track(.captureStarted, parameters: ["source": source])
+    private func startCaptureProcessing(_ request: QueuedCaptureRequest) {
+        AppLogger.info(
+            "Capture processing started source=\(request.source) capturedSnapshot=\(request.capturedSnapshot.id.uuidString)"
+        )
+        eventTracker.track(.captureStarted, parameters: ["source": request.source])
         refreshMenuState()
         Task {
             do {
-                let result = try await workflow.runCapture()
+                let result = try await workflow.runCapture(
+                    capturedSnapshot: request.capturedSnapshot,
+                    screenshotData: request.screenshotData
+                )
                 let removedInFlight = await MainActor.run { [weak self] in
                     self?.consumeDeferredUndoAfterCapture() ?? false
                 }
@@ -447,22 +477,18 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
                 }
             }
         }
-        return true
     }
 
     private func completeCaptureAndStartNextIfNeeded() {
         let completion = captureProcessingQueue.completeCurrentCapture()
         refreshMenuState()
-        guard case .startNext(let nextSource, let remainingQueued) = completion else {
+        guard case .startNext(let nextRequest, let remainingQueued) = completion else {
             return
         }
-        AppLogger.info("Starting queued capture source=\(nextSource) remainingQueue=\(remainingQueued)")
-        guard startCapture(source: nextSource) else {
-            let droppedCount = captureProcessingQueue.dropQueuedCapturesAfterRejectedStart()
-            AppLogger.info("Discarding queued captures after failed queued start droppedCount=\(droppedCount)")
-            refreshMenuState()
-            return
-        }
+        AppLogger.info(
+            "Starting queued capture source=\(nextRequest.source) remainingQueue=\(remainingQueued) capturedSnapshot=\(nextRequest.capturedSnapshot.id.uuidString)"
+        )
+        startCaptureProcessing(nextRequest)
     }
 
     @objc private func undoLastCapture() {
@@ -920,13 +946,14 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
         let provider = forTitleGeneration
             ? developmentConfig.providerForTitleGeneration(selectedProvider: selectedProvider)
             : developmentConfig.providerForDensification(selectedProvider: selectedProvider)
+        let requiresCredentials = developmentConfig.requiresCredentials(for: provider)
         let model = state.selectedModel ?? ""
-        guard provider == .apple || !model.isEmpty else {
+        guard !requiresCredentials || !model.isEmpty else {
             AppLogger.debug("configuredModelConfig unavailable: model missing for provider=\(provider.rawValue)")
             return nil
         }
         let apiKey = try keychain.get("api.\(provider.rawValue)") ?? ""
-        guard provider == .apple || !apiKey.isEmpty else {
+        guard !requiresCredentials || !apiKey.isEmpty else {
             AppLogger.debug("configuredModelConfig unavailable: key missing for provider=\(provider.rawValue)")
             return nil
         }

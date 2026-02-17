@@ -361,15 +361,15 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
     }
 
     private func availableProviders() -> [ProviderName] {
-        let providers: [ProviderName] = [.openai, .anthropic, .gemini]
-        guard developmentConfig.appleFoundationProviderEnabled else {
-            return providers
+        var providers: [ProviderName] = [.openai, .anthropic, .gemini]
+        if developmentConfig.appleFoundationProviderEnabled {
+            providers.append(.apple)
         }
-        return providers + [.apple]
+        return providers
     }
 
     private func providerRequiresCredentials(_ provider: ProviderName) -> Bool {
-        provider != .apple
+        developmentConfig.requiresCredentials(for: provider)
     }
 
     private func selectProvider(_ provider: ProviderName) {
@@ -405,7 +405,7 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
         }
         infoLabel.stringValue = onboardingCompletedAtLoad
             ? ""
-            : "Apple Foundation selected. Model and API key are not required."
+            : "\(provider.displayName) selected. Model and API key are not required."
         updateActionAvailability()
     }
 
@@ -450,8 +450,9 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
             keyField.placeholderString = ""
             return
         }
-        modelField.placeholderString = "Not required for Apple Foundation"
-        keyField.placeholderString = "Not required for Apple Foundation"
+        let providerName = currentSelectedProvider()?.displayName ?? "selected provider"
+        modelField.placeholderString = "Not required for \(providerName)"
+        keyField.placeholderString = "Not required for \(providerName)"
     }
 
     private func defaultModel(for provider: ProviderName) -> String {
@@ -543,7 +544,7 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
         }
         infoLabel.stringValue = onboardingCompletedAtLoad
             ? ""
-            : "Apple Foundation selected. Model and API key are not required."
+            : "\(selection.provider.displayName) selected. Model and API key are not required."
     }
 
     private func refreshPermissionsStatus() {

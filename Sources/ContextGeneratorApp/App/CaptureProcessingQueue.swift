@@ -1,30 +1,37 @@
+import ContextGenerator
 import Foundation
+
+struct QueuedCaptureRequest: Equatable {
+    let source: String
+    let capturedSnapshot: CapturedSnapshot
+    let screenshotData: Data?
+}
 
 final class CaptureProcessingQueue {
     enum RequestResult: Equatable {
-        case startNow(source: String)
+        case startNow(request: QueuedCaptureRequest)
         case queued(count: Int)
     }
 
     enum CompletionResult: Equatable {
         case idle
-        case startNext(source: String, remainingQueued: Int)
+        case startNext(request: QueuedCaptureRequest, remainingQueued: Int)
     }
 
     private(set) var isCaptureInProgress = false
-    private var queuedSources: [String] = []
+    private var queuedRequests: [QueuedCaptureRequest] = []
 
     var queuedCount: Int {
-        queuedSources.count
+        queuedRequests.count
     }
 
-    func requestCapture(source: String) -> RequestResult {
+    func requestCapture(_ request: QueuedCaptureRequest) -> RequestResult {
         if isCaptureInProgress {
-            queuedSources.append(source)
-            return .queued(count: queuedSources.count)
+            queuedRequests.append(request)
+            return .queued(count: queuedRequests.count)
         }
         isCaptureInProgress = true
-        return .startNow(source: source)
+        return .startNow(request: request)
     }
 
     func markCurrentCaptureDidNotStart() {
@@ -33,19 +40,19 @@ final class CaptureProcessingQueue {
 
     func completeCurrentCapture() -> CompletionResult {
         isCaptureInProgress = false
-        guard !queuedSources.isEmpty else {
+        guard !queuedRequests.isEmpty else {
             return .idle
         }
-        let nextSource = queuedSources.removeFirst()
+        let nextRequest = queuedRequests.removeFirst()
         isCaptureInProgress = true
-        return .startNext(source: nextSource, remainingQueued: queuedSources.count)
+        return .startNext(request: nextRequest, remainingQueued: queuedRequests.count)
     }
 
     @discardableResult
     func dropQueuedCapturesAfterRejectedStart() -> Int {
         isCaptureInProgress = false
-        let droppedCount = queuedSources.count
-        queuedSources.removeAll()
+        let droppedCount = queuedRequests.count
+        queuedRequests.removeAll()
         return droppedCount
     }
 }
