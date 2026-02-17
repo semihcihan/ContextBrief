@@ -98,6 +98,7 @@ final class TrashLibraryController: NSViewController, NSTableViewDataSource, NST
         detailTextView.isVerticallyResizable = true
         detailTextView.isHorizontallyResizable = false
         detailTextView.autoresizingMask = [.width]
+        detailTextView.textContainerInset = NSSize(width: 12, height: 12)
         detailTextView.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
         detailTextView.textContainer?.widthTracksTextView = true
         detailScrollView.documentView = detailTextView

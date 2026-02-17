@@ -364,12 +364,14 @@ public final class ContextCaptureService: ContextCapturing {
     }
 
     private func attributeValue(from element: AXUIElement, attribute: String) -> AnyObject? {
-        var value: CFTypeRef?
-        let result = AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
-        guard result == .success, let value else {
-            return nil
+        performAXRead {
+            var value: CFTypeRef?
+            let result = AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
+            guard result == .success, let value else {
+                return nil
+            }
+            return value
         }
-        return value
     }
 
     private func elementAttribute(from element: AXUIElement, attribute: String) -> AXUIElement? {
@@ -393,13 +395,15 @@ public final class ContextCaptureService: ContextCapturing {
     }
 
     private func attributeNames(from element: AXUIElement) -> [String] {
-        var namesRef: CFArray?
-        let result = AXUIElementCopyAttributeNames(element, &namesRef)
-        guard result == .success, let namesRef else {
-            return []
-        }
+        performAXRead {
+            var namesRef: CFArray?
+            let result = AXUIElementCopyAttributeNames(element, &namesRef)
+            guard result == .success, let namesRef else {
+                return []
+            }
 
-        return namesRef as? [String] ?? []
+            return namesRef as? [String] ?? []
+        }
     }
 
     private func stringAttribute(from element: AXUIElement?, attribute: String) -> String? {
@@ -499,5 +503,12 @@ public final class ContextCaptureService: ContextCapturing {
     private func normalizedString(_ raw: String) -> String {
         let collapsed = raw.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
         return collapsed.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func performAXRead<T>(_ block: () -> T) -> T {
+        if Thread.isMainThread {
+            return block()
+        }
+        return DispatchQueue.main.sync(execute: block)
     }
 }

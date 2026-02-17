@@ -11,6 +11,7 @@ final class ContextLibraryController: NSViewController, NSOutlineViewDataSource,
     private var snapshotsByContextId: [UUID: [Snapshot]] = [:]
     private var currentContextId: UUID?
     private var retryingSnapshotId: UUID?
+    private var retryingFailedCurrentContextSnapshots = false
 
     private let outlineView = NSOutlineView()
     private let outlineScrollView = NSScrollView()
@@ -107,6 +108,7 @@ final class ContextLibraryController: NSViewController, NSOutlineViewDataSource,
         detailTextView.isVerticallyResizable = true
         detailTextView.isHorizontallyResizable = false
         detailTextView.autoresizingMask = [.width]
+        detailTextView.textContainerInset = NSSize(width: 12, height: 12)
         detailTextView.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
         detailTextView.textContainer?.widthTracksTextView = true
         detailScrollView.documentView = detailTextView
@@ -298,8 +300,18 @@ final class ContextLibraryController: NSViewController, NSOutlineViewDataSource,
 
     private func populateContextMenu(context: Context) {
         contextMenu.removeAllItems()
+        contextMenu.addItem(withTitle: "New Context", action: #selector(createNewContext), keyEquivalent: "")
         if context.id != currentContextId {
             contextMenu.addItem(withTitle: "Set As Current", action: #selector(setCurrentContext), keyEquivalent: "")
+        } else {
+            let failedCount = failedSnapshotCount(in: context.id)
+            if failedCount > 0 {
+                let title = failedCount == 1
+                    ? "Retry Failed Snapshot"
+                    : "Retry Failed Snapshots (\(failedCount))"
+                let retryItem = contextMenu.addItem(withTitle: title, action: #selector(retryFailedSnapshotsInSelectedContext), keyEquivalent: "")
+                retryItem.isEnabled = !retryingFailedCurrentContextSnapshots
+            }
         }
         contextMenu.addItem(withTitle: "Rename", action: #selector(renameSelectedContext), keyEquivalent: "")
         contextMenu.addItem(withTitle: "Delete", action: #selector(deleteSelectedContext), keyEquivalent: "")
@@ -314,9 +326,15 @@ final class ContextLibraryController: NSViewController, NSOutlineViewDataSource,
         }
         if snapshot.contextId != currentContextId {
             snapshotMenu.addItem(withTitle: "Move To Current Context", action: #selector(moveSelectedSnapshotToCurrentContext), keyEquivalent: "")
+        } else {
+            snapshotMenu.addItem(withTitle: "Move to New Context", action: #selector(moveSelectedSnapshotToNewContext), keyEquivalent: "")
         }
         snapshotMenu.addItem(withTitle: "Delete", action: #selector(deleteSelectedSnapshot), keyEquivalent: "")
         outlineView.menu = snapshotMenu
+    }
+
+    func createNewContextFromSidebar() {
+        createNewContext()
     }
 
     @objc private func setCurrentContext() {
@@ -389,6 +407,19 @@ final class ContextLibraryController: NSViewController, NSOutlineViewDataSource,
         }
     }
 
+    @objc private func moveSelectedSnapshotToNewContext() {
+        guard let snapshot = selectedSnapshot() else {
+            return
+        }
+        do {
+            let moved = try sessionManager.moveSnapshotToNewContext(snapshot.id, title: "New Context")
+            onSelectionChange("Moved \(moved.snapshot.title) to new context")
+            refreshData()
+        } catch {
+            onSelectionChange("Move snapshot failed: \(error.localizedDescription)")
+        }
+    }
+
     @objc private func deleteSelectedSnapshot() {
         guard let snapshot = selectedSnapshot() else {
             return
@@ -429,6 +460,62 @@ final class ContextLibraryController: NSViewController, NSOutlineViewDataSource,
         }
     }
 
+    @objc private func retryFailedSnapshotsInSelectedContext() {
+        guard let context = selectedContext(), context.id == currentContextId else {
+            return
+        }
+        guard !retryingFailedCurrentContextSnapshots else {
+            return
+        }
+        let failedSnapshots = snapshotsByContextId[context.id]?.filter { $0.status == .failed } ?? []
+        guard !failedSnapshots.isEmpty else {
+            onSelectionChange("No failed snapshots to retry")
+            return
+        }
+
+        retryingFailedCurrentContextSnapshots = true
+        onSelectionChange(
+            failedSnapshots.count == 1
+                ? "Retrying 1 failed snapshot..."
+                : "Retrying \(failedSnapshots.count) failed snapshots..."
+        )
+        Task {
+            var succeededCount = 0
+            var failedCount = 0
+            for snapshot in failedSnapshots {
+                do {
+                    _ = try await retryFailedSnapshot(snapshot.id)
+                    succeededCount += 1
+                } catch {
+                    failedCount += 1
+                }
+            }
+            await MainActor.run {
+                self.retryingFailedCurrentContextSnapshots = false
+                if failedCount == 0 {
+                    self.onSelectionChange(
+                        succeededCount == 1
+                            ? "Retried 1 failed snapshot"
+                            : "Retried \(succeededCount) failed snapshots"
+                    )
+                } else {
+                    self.onSelectionChange("Retried \(succeededCount), failed \(failedCount)")
+                }
+                self.refreshData()
+            }
+        }
+    }
+
+    @objc private func createNewContext() {
+        do {
+            _ = try sessionManager.createNewContext(title: "New Context")
+            onSelectionChange("Started a new context")
+            refreshData()
+        } catch {
+            onSelectionChange("New context failed: \(error.localizedDescription)")
+        }
+    }
+
     private func selectedContext() -> Context? {
         if let context = outlineView.item(atRow: outlineView.selectedRow) as? Context {
             return context
@@ -441,6 +528,10 @@ final class ContextLibraryController: NSViewController, NSOutlineViewDataSource,
 
     private func selectedSnapshot() -> Snapshot? {
         outlineView.item(atRow: outlineView.selectedRow) as? Snapshot
+    }
+
+    private func failedSnapshotCount(in contextId: UUID) -> Int {
+        snapshotsByContextId[contextId]?.filter { $0.status == .failed }.count ?? 0
     }
 
     private func makeBadgeLabel(
