@@ -4,6 +4,7 @@ import ContextGenerator
 final class ContextLibraryController: NSViewController, NSOutlineViewDataSource, NSOutlineViewDelegate, NSMenuDelegate {
     private let repository: ContextRepositorying
     private let sessionManager: ContextSessionManager
+    private let exportService: ContextExportService
     private let onSelectionChange: (String) -> Void
     private let retryFailedSnapshot: (UUID) async throws -> Snapshot
 
@@ -28,6 +29,7 @@ final class ContextLibraryController: NSViewController, NSOutlineViewDataSource,
     ) {
         self.repository = repository
         self.sessionManager = sessionManager
+        exportService = ContextExportService(repository: repository)
         self.onSelectionChange = onSelectionChange
         self.retryFailedSnapshot = retryFailedSnapshot
         super.init(nibName: nil, bundle: nil)
@@ -46,6 +48,7 @@ final class ContextLibraryController: NSViewController, NSOutlineViewDataSource,
         super.viewDidLoad()
         setupUI()
         refreshData()
+        applyInitialExpansionState()
     }
 
     func refreshData() {
@@ -58,7 +61,6 @@ final class ContextLibraryController: NSViewController, NSOutlineViewDataSource,
                 }
             )
             outlineView.reloadData()
-            contexts.forEach { outlineView.expandItem($0) }
             if outlineView.selectedRow >= 0 {
                 showSelectionDetails()
             } else if let first = contexts.first {
@@ -300,7 +302,6 @@ final class ContextLibraryController: NSViewController, NSOutlineViewDataSource,
 
     private func populateContextMenu(context: Context) {
         contextMenu.removeAllItems()
-        contextMenu.addItem(withTitle: "New Context", action: #selector(createNewContext), keyEquivalent: "")
         if context.id != currentContextId {
             contextMenu.addItem(withTitle: "Set As Current", action: #selector(setCurrentContext), keyEquivalent: "")
         } else {
@@ -313,6 +314,7 @@ final class ContextLibraryController: NSViewController, NSOutlineViewDataSource,
                 retryItem.isEnabled = !retryingFailedCurrentContextSnapshots
             }
         }
+        contextMenu.addItem(withTitle: "Copy Context", action: #selector(copySelectedContext), keyEquivalent: "")
         contextMenu.addItem(withTitle: "Rename", action: #selector(renameSelectedContext), keyEquivalent: "")
         contextMenu.addItem(withTitle: "Delete", action: #selector(deleteSelectedContext), keyEquivalent: "")
         outlineView.menu = contextMenu
@@ -440,18 +442,26 @@ final class ContextLibraryController: NSViewController, NSOutlineViewDataSource,
         guard retryingSnapshotId == nil else {
             return
         }
+        let originalCurrentContextId: UUID?
+        do {
+            originalCurrentContextId = try sessionManager.currentContextIfExists()?.id
+        } catch {
+            originalCurrentContextId = nil
+        }
         retryingSnapshotId = snapshot.id
         onSelectionChange("Retrying \(snapshot.title)...")
         Task {
             do {
                 let retried = try await retryFailedSnapshot(snapshot.id)
                 await MainActor.run {
+                    self.restoreCurrentContextIfNeeded(originalCurrentContextId)
                     self.retryingSnapshotId = nil
                     self.onSelectionChange("Retry succeeded for \(retried.title)")
                     self.refreshData()
                 }
             } catch {
                 await MainActor.run {
+                    self.restoreCurrentContextIfNeeded(originalCurrentContextId)
                     self.retryingSnapshotId = nil
                     self.onSelectionChange("Retry failed: \(error.localizedDescription)")
                     self.refreshData()
@@ -466,6 +476,12 @@ final class ContextLibraryController: NSViewController, NSOutlineViewDataSource,
         }
         guard !retryingFailedCurrentContextSnapshots else {
             return
+        }
+        let originalCurrentContextId: UUID?
+        do {
+            originalCurrentContextId = try sessionManager.currentContextIfExists()?.id
+        } catch {
+            originalCurrentContextId = nil
         }
         let failedSnapshots = snapshotsByContextId[context.id]?.filter { $0.status == .failed } ?? []
         guard !failedSnapshots.isEmpty else {
@@ -491,6 +507,7 @@ final class ContextLibraryController: NSViewController, NSOutlineViewDataSource,
                 }
             }
             await MainActor.run {
+                self.restoreCurrentContextIfNeeded(originalCurrentContextId)
                 self.retryingFailedCurrentContextSnapshots = false
                 if failedCount == 0 {
                     self.onSelectionChange(
@@ -503,6 +520,25 @@ final class ContextLibraryController: NSViewController, NSOutlineViewDataSource,
                 }
                 self.refreshData()
             }
+        }
+    }
+
+    @objc private func copySelectedContext() {
+        guard let context = selectedContext() else {
+            return
+        }
+        if failedSnapshotCount(in: context.id) > 0 {
+            onSelectionChange("Resolve failed snapshots before copying")
+            presentFailedSnapshotsAlert()
+            return
+        }
+        do {
+            let text = try exportService.exportText(contextId: context.id, mode: .dense)
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+            onSelectionChange("Copied dense context")
+        } catch {
+            onSelectionChange("Copy failed: \(error.localizedDescription)")
         }
     }
 
@@ -532,6 +568,42 @@ final class ContextLibraryController: NSViewController, NSOutlineViewDataSource,
 
     private func failedSnapshotCount(in contextId: UUID) -> Int {
         snapshotsByContextId[contextId]?.filter { $0.status == .failed }.count ?? 0
+    }
+
+    private func restoreCurrentContextIfNeeded(_ originalCurrentContextId: UUID?) {
+        guard let originalCurrentContextId else {
+            return
+        }
+        let activeContextId: UUID?
+        do {
+            activeContextId = try sessionManager.currentContextIfExists()?.id
+        } catch {
+            return
+        }
+        guard let activeContextId, activeContextId != originalCurrentContextId else {
+            return
+        }
+        do {
+            try sessionManager.setCurrentContext(originalCurrentContextId)
+        } catch {
+            onSelectionChange("Set context failed: \(error.localizedDescription)")
+        }
+    }
+
+    private func presentFailedSnapshotsAlert() {
+        let alert = NSAlert()
+        alert.messageText = "Failed Snapshots Found"
+        alert.informativeText = "Current context contains failed snapshots. Retry or delete them in Context Library before copying."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Open Context Library")
+        _ = alert.runModal()
+    }
+
+    private func applyInitialExpansionState() {
+        contexts.forEach { outlineView.collapseItem($0) }
+        if let currentContext = contexts.first(where: { $0.id == currentContextId }) {
+            outlineView.expandItem(currentContext)
+        }
     }
 
     private func makeBadgeLabel(

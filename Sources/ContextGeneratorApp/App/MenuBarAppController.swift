@@ -72,12 +72,12 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
             }
             switch SMAppService.mainApp.status {
             case .enabled:
-                AppLogger.info("Launch at login already enabled")
+                AppLogger.debug("Launch at login already enabled")
             case .notRegistered:
                 try SMAppService.mainApp.register()
-                AppLogger.info("Launch at login enabled")
+                AppLogger.debug("Launch at login enabled")
             case .requiresApproval:
-                AppLogger.info("Launch at login requires user approval in System Settings")
+                AppLogger.debug("Launch at login requires user approval in System Settings")
             case .notFound:
                 AppLogger.error("Launch at login setup failed: app service not found")
                 return
