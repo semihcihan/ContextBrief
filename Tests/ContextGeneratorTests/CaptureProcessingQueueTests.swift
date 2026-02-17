@@ -71,25 +71,6 @@ final class CaptureProcessingQueueTests: XCTestCase {
     }
 
     private func makeRequest(source: String) -> QueuedCaptureRequest {
-        QueuedCaptureRequest(
-            source: source,
-            capturedSnapshot: CapturedSnapshot(
-                sourceType: .desktopApp,
-                appName: "Terminal",
-                bundleIdentifier: "com.apple.Terminal",
-                windowTitle: "zsh",
-                captureMethod: .hybrid,
-                accessibilityText: "access",
-                ocrText: "ocr",
-                combinedText: "access\no cr",
-                diagnostics: CaptureDiagnostics(
-                    accessibilityLineCount: 1,
-                    ocrLineCount: 1,
-                    processingDurationMs: 100,
-                    usedFallbackOCR: true
-                )
-            ),
-            screenshotData: nil
-        )
+        QueuedCaptureRequest(source: source)
     }
 }

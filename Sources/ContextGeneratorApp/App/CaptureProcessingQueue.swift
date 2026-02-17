@@ -3,8 +3,6 @@ import Foundation
 
 struct QueuedCaptureRequest: Equatable {
     let source: String
-    let capturedSnapshot: CapturedSnapshot
-    let screenshotData: Data?
 }
 
 final class CaptureProcessingQueue {
