@@ -101,6 +101,7 @@ final class HTMLIconRenderer: NSObject, WKNavigationDelegate {
 
         let size = CGFloat(arguments.size)
         let view = WKWebView(frame: NSRect(x: 0, y: 0, width: size, height: size), configuration: configuration)
+        view.setValue(false, forKey: "drawsBackground")
         view.navigationDelegate = self
         webView = view
         view.loadFileURL(arguments.inputURL, allowingReadAccessTo: arguments.inputURL.deletingLastPathComponent())
