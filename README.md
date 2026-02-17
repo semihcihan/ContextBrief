@@ -1,4 +1,7 @@
-# Context Brief
+<h1>
+  <img src="Sources/ContextGeneratorApp/Resources/AppIcon.iconset/icon_512x512.png" alt="Context Brief app icon" width="36" style="vertical-align: middle; margin-right: 8px;" />
+  Context Brief
+</h1>
 
 Context Brief is a macOS menu bar app that captures what you are working on, cleans it up into high-signal context, and keeps it ready to copy into LLMs and coding agents.
 
