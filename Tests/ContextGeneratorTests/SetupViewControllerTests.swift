@@ -32,6 +32,7 @@ final class SetupViewControllerTests: XCTestCase {
         let controller = makeController(
             appStateService: appStateService,
             developmentConfig: DevelopmentConfig(
+                enableLocalDebugProvider: false,
                 enableAppleFoundationForTitleGeneration: true,
                 enableAppleFoundationForDensification: false,
                 appleFoundationAvailableOverride: true
@@ -47,6 +48,7 @@ final class SetupViewControllerTests: XCTestCase {
         let controller = makeController(
             appStateService: appStateService,
             developmentConfig: DevelopmentConfig(
+                enableLocalDebugProvider: false,
                 enableAppleFoundationForTitleGeneration: true,
                 enableAppleFoundationForDensification: false,
                 appleFoundationAvailableOverride: true
@@ -63,7 +65,7 @@ final class SetupViewControllerTests: XCTestCase {
         let (appStateService, _) = try makeAppStateService()
         let controller = makeController(
             appStateService: appStateService,
-            developmentConfig: DevelopmentConfig.shared
+            developmentConfig: defaultDevelopmentConfig()
         )
         controller.loadViewIfNeeded()
 
@@ -78,6 +80,7 @@ final class SetupViewControllerTests: XCTestCase {
         let controller = makeController(
             appStateService: appStateService,
             developmentConfig: DevelopmentConfig(
+                enableLocalDebugProvider: false,
                 enableAppleFoundationForTitleGeneration: true,
                 enableAppleFoundationForDensification: false,
                 appleFoundationAvailableOverride: true
@@ -100,7 +103,7 @@ final class SetupViewControllerTests: XCTestCase {
 
         let controller = makeController(
             appStateService: appStateService,
-            developmentConfig: DevelopmentConfig.shared
+            developmentConfig: defaultDevelopmentConfig()
         )
         controller.loadViewIfNeeded()
         controller.testingSelectProvider(.gemini)
@@ -117,7 +120,7 @@ final class SetupViewControllerTests: XCTestCase {
         let (appStateService, _) = try makeAppStateService()
         let controller = makeController(
             appStateService: appStateService,
-            developmentConfig: DevelopmentConfig.shared
+            developmentConfig: defaultDevelopmentConfig()
         )
         controller.loadViewIfNeeded()
         controller.testingSelectProvider(.anthropic)
@@ -137,7 +140,7 @@ final class SetupViewControllerTests: XCTestCase {
 
         let controller = makeController(
             appStateService: appStateService,
-            developmentConfig: DevelopmentConfig.shared
+            developmentConfig: defaultDevelopmentConfig()
         )
         controller.loadViewIfNeeded()
 
@@ -154,7 +157,7 @@ final class SetupViewControllerTests: XCTestCase {
 
         let controller = makeController(
             appStateService: appStateService,
-            developmentConfig: DevelopmentConfig.shared
+            developmentConfig: defaultDevelopmentConfig()
         )
         controller.loadViewIfNeeded()
         controller.testingSetModelValue("gpt-4.1")
@@ -170,7 +173,7 @@ final class SetupViewControllerTests: XCTestCase {
 
         let controller = makeController(
             appStateService: appStateService,
-            developmentConfig: DevelopmentConfig.shared
+            developmentConfig: defaultDevelopmentConfig()
         )
         controller.loadViewIfNeeded()
 
@@ -198,6 +201,12 @@ final class SetupViewControllerTests: XCTestCase {
             appStateService: appStateService,
             developmentConfig: developmentConfig,
             onComplete: {}
+        )
+    }
+
+    private func defaultDevelopmentConfig() -> DevelopmentConfig {
+        DevelopmentConfig(
+            enableLocalDebugProvider: false
         )
     }
 }

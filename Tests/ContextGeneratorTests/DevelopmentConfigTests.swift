@@ -9,6 +9,7 @@ final class DevelopmentConfigTests: XCTestCase {
             .appendingPathComponent("missing.plist")
         let config = DevelopmentConfig(plistURL: missingURL, appleFoundationAvailableOverride: false)
 
+        XCTAssertFalse(config.enableLocalDebugProvider)
         XCTAssertFalse(config.enableAppleFoundationForTitleGeneration)
         XCTAssertFalse(config.enableAppleFoundationForDensification)
         XCTAssertEqual(config.thirdPartyContextTitleRefreshEvery, 3)
@@ -18,6 +19,7 @@ final class DevelopmentConfigTests: XCTestCase {
 
     func testLoadsValuesFromPlist() throws {
         let plistURL = try writePlist([
+            "enableLocalDebugProvider": true,
             "enableAppleFoundationForTitleGeneration": true,
             "enableAppleFoundationForDensification": false,
             "thirdPartyContextTitleRefreshEvery": 5,
@@ -25,6 +27,7 @@ final class DevelopmentConfigTests: XCTestCase {
         ])
         let config = DevelopmentConfig(plistURL: plistURL, appleFoundationAvailableOverride: true)
 
+        XCTAssertTrue(config.enableLocalDebugProvider)
         XCTAssertTrue(config.enableAppleFoundationForTitleGeneration)
         XCTAssertFalse(config.enableAppleFoundationForDensification)
         XCTAssertEqual(config.thirdPartyContextTitleRefreshEvery, 5)
@@ -61,6 +64,21 @@ final class DevelopmentConfigTests: XCTestCase {
         )
         XCTAssertEqual(config.thirdPartyContextTitleRefreshEvery, 1)
         XCTAssertEqual(config.appleContextTitleRefreshEvery, 1)
+    }
+
+    func testLocalDebugFlagCanDisableCredentialRequirements() {
+        let config = DevelopmentConfig(
+            enableLocalDebugProvider: true
+        )
+
+#if DEBUG
+        XCTAssertFalse(config.requiresCredentials(for: .openai))
+        XCTAssertFalse(config.requiresCredentials(for: .gemini))
+#else
+        XCTAssertTrue(config.requiresCredentials(for: .openai))
+        XCTAssertTrue(config.requiresCredentials(for: .gemini))
+#endif
+        XCTAssertFalse(config.requiresCredentials(for: .apple))
     }
 
     private func writePlist(_ dictionary: [String: Any]) throws -> URL {

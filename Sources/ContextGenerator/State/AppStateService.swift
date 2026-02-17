@@ -71,7 +71,7 @@ public final class AppStateService {
         return ProviderSelection(
             provider: provider,
             model: model,
-            hasAPIKey: provider == .apple ? true : ((try keychain.get("api.\(provider.rawValue)")) != nil)
+            hasAPIKey: provider.requiresCredentials ? ((try keychain.get("api.\(provider.rawValue)")) != nil) : true
         )
     }
 

@@ -33,11 +33,12 @@ public final class SnapshotRetryWorkflow {
             throw AppError.providerNotConfigured
         }
         let model = snapshot.model ?? ""
-        guard provider == .apple || !model.isEmpty else {
+        let requiresCredentials = DevelopmentConfig.shared.requiresCredentials(for: provider)
+        guard !requiresCredentials || !model.isEmpty else {
             throw AppError.providerNotConfigured
         }
         let apiKey = try keychain.get("api.\(provider.rawValue)") ?? ""
-        guard provider == .apple || !apiKey.isEmpty else {
+        guard !requiresCredentials || !apiKey.isEmpty else {
             throw AppError.keyNotConfigured
         }
 

@@ -7,14 +7,23 @@ import FoundationModels
 public struct DevelopmentConfig {
     public static let shared = DevelopmentConfig()
     private static let defaultPlistFileName = "config.plist"
+    private static let isDebugBuild: Bool = {
+#if DEBUG
+        true
+#else
+        false
+#endif
+    }()
     private let appleFoundationAvailableOverride: Bool?
 
+    public let enableLocalDebugProvider: Bool
     public let enableAppleFoundationForTitleGeneration: Bool
     public let enableAppleFoundationForDensification: Bool
     public let thirdPartyContextTitleRefreshEvery: Int
     public let appleContextTitleRefreshEvery: Int
 
     public init(
+        enableLocalDebugProvider: Bool? = nil,
         enableAppleFoundationForTitleGeneration: Bool? = nil,
         enableAppleFoundationForDensification: Bool? = nil,
         thirdPartyContextTitleRefreshEvery: Int? = nil,
@@ -24,6 +33,9 @@ public struct DevelopmentConfig {
     ) {
         let fileOverrides = Self.loadPlistOverrides(plistURL: plistURL)
         self.appleFoundationAvailableOverride = appleFoundationAvailableOverride
+        self.enableLocalDebugProvider = enableLocalDebugProvider
+            ?? fileOverrides.enableLocalDebugProvider
+            ?? false
         self.enableAppleFoundationForTitleGeneration = enableAppleFoundationForTitleGeneration
             ?? fileOverrides.enableAppleFoundationForTitleGeneration
             ?? false
@@ -55,6 +67,10 @@ public struct DevelopmentConfig {
         appleFoundationAvailable && (enableAppleFoundationForTitleGeneration || enableAppleFoundationForDensification)
     }
 
+    public var localDebugResponsesEnabled: Bool {
+        Self.isDebugBuild && enableLocalDebugProvider
+    }
+
     public func providerForDensification(selectedProvider: ProviderName) -> ProviderName {
         guard enableAppleFoundationForDensification, appleFoundationAvailable else {
             return selectedProvider
@@ -67,6 +83,13 @@ public struct DevelopmentConfig {
             return selectedProvider
         }
         return .apple
+    }
+
+    public func requiresCredentials(for provider: ProviderName) -> Bool {
+        guard !localDebugResponsesEnabled else {
+            return false
+        }
+        return provider.requiresCredentials
     }
 
     public func contextTitleRefreshEvery(for provider: ProviderName) -> Int {
@@ -103,12 +126,14 @@ public struct DevelopmentConfig {
 }
 
 private struct FileOverrides {
+    let enableLocalDebugProvider: Bool?
     let enableAppleFoundationForTitleGeneration: Bool?
     let enableAppleFoundationForDensification: Bool?
     let thirdPartyContextTitleRefreshEvery: Int?
     let appleContextTitleRefreshEvery: Int?
 
     static let empty = FileOverrides(
+        enableLocalDebugProvider: nil,
         enableAppleFoundationForTitleGeneration: nil,
         enableAppleFoundationForDensification: nil,
         thirdPartyContextTitleRefreshEvery: nil,
@@ -116,11 +141,13 @@ private struct FileOverrides {
     )
 
     init(
+        enableLocalDebugProvider: Bool?,
         enableAppleFoundationForTitleGeneration: Bool?,
         enableAppleFoundationForDensification: Bool?,
         thirdPartyContextTitleRefreshEvery: Int?,
         appleContextTitleRefreshEvery: Int?
     ) {
+        self.enableLocalDebugProvider = enableLocalDebugProvider
         self.enableAppleFoundationForTitleGeneration = enableAppleFoundationForTitleGeneration
         self.enableAppleFoundationForDensification = enableAppleFoundationForDensification
         self.thirdPartyContextTitleRefreshEvery = thirdPartyContextTitleRefreshEvery
@@ -128,6 +155,7 @@ private struct FileOverrides {
     }
 
     init(dictionary: [String: Any]) {
+        enableLocalDebugProvider = dictionary["enableLocalDebugProvider"] as? Bool
         enableAppleFoundationForTitleGeneration = dictionary["enableAppleFoundationForTitleGeneration"] as? Bool
         enableAppleFoundationForDensification = dictionary["enableAppleFoundationForDensification"] as? Bool
         thirdPartyContextTitleRefreshEvery = dictionary["thirdPartyContextTitleRefreshEvery"] as? Int

@@ -13,6 +13,7 @@ final class ContextLibraryController: NSViewController, NSOutlineViewDataSource,
     private var currentContextId: UUID?
     private var retryingSnapshotId: UUID?
     private var retryingFailedCurrentContextSnapshots = false
+    private var didApplyInitialExpansionState = false
 
     private let outlineView = NSOutlineView()
     private let outlineScrollView = NSScrollView()
@@ -48,10 +49,20 @@ final class ContextLibraryController: NSViewController, NSOutlineViewDataSource,
         super.viewDidLoad()
         setupUI()
         refreshData()
-        applyInitialExpansionState()
     }
 
     func refreshData() {
+        let expandedContextIds = Set(
+            contexts
+                .filter { outlineView.isItemExpanded($0) }
+                .map(\.id)
+        )
+        let selectedRow = outlineView.selectedRow
+        let selectedItem = selectedRow >= 0
+            ? outlineView.item(atRow: selectedRow)
+            : nil
+        let selectedContextId = (selectedItem as? Context)?.id
+        let selectedSnapshotId = (selectedItem as? Snapshot)?.id
         do {
             contexts = try repository.listContexts()
             currentContextId = try sessionManager.currentContextIfExists()?.id
@@ -60,19 +71,20 @@ final class ContextLibraryController: NSViewController, NSOutlineViewDataSource,
                     (context.id, try repository.snapshots(in: context.id))
                 }
             )
+            guard isViewLoaded else {
+                return
+            }
             outlineView.reloadData()
-            if outlineView.selectedRow >= 0 {
+            applyExpansionState(previouslyExpandedContextIds: expandedContextIds)
+            if restoreSelection(
+                selectedContextId: selectedContextId,
+                selectedSnapshotId: selectedSnapshotId
+            ) {
                 showSelectionDetails()
-            } else if let first = contexts.first {
-                let row = outlineView.row(forItem: first)
-                if row >= 0 {
-                    outlineView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
-                    showSelectionDetails()
-                } else {
-                    detailTextView.string = "Select a context or snapshot."
-                }
             } else {
-                detailTextView.string = "No contexts yet."
+                detailTextView.string = contexts.isEmpty
+                    ? "No contexts yet."
+                    : "Select a context or snapshot."
             }
         } catch {
             onSelectionChange("Failed loading context library: \(error.localizedDescription)")
@@ -604,6 +616,62 @@ final class ContextLibraryController: NSViewController, NSOutlineViewDataSource,
         if let currentContext = contexts.first(where: { $0.id == currentContextId }) {
             outlineView.expandItem(currentContext)
         }
+    }
+
+    private func applyExpansionState(previouslyExpandedContextIds: Set<UUID>) {
+        if !didApplyInitialExpansionState {
+            applyInitialExpansionState()
+            didApplyInitialExpansionState = true
+            return
+        }
+
+        contexts.forEach { context in
+            if previouslyExpandedContextIds.contains(context.id) {
+                outlineView.expandItem(context)
+            } else {
+                outlineView.collapseItem(context)
+            }
+        }
+    }
+
+    private func restoreSelection(selectedContextId: UUID?, selectedSnapshotId: UUID?) -> Bool {
+        if let selectedSnapshotId {
+            for context in contexts {
+                guard
+                    let snapshots = snapshotsByContextId[context.id],
+                    let snapshot = snapshots.first(where: { $0.id == selectedSnapshotId })
+                else {
+                    continue
+                }
+                let row = outlineView.row(forItem: snapshot)
+                if row >= 0 {
+                    outlineView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+                    return true
+                }
+            }
+        }
+
+        if
+            let selectedContextId,
+            let context = contexts.first(where: { $0.id == selectedContextId })
+        {
+            let row = outlineView.row(forItem: context)
+            if row >= 0 {
+                outlineView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+                return true
+            }
+        }
+
+        guard let first = contexts.first else {
+            return false
+        }
+
+        let row = outlineView.row(forItem: first)
+        guard row >= 0 else {
+            return false
+        }
+        outlineView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        return true
     }
 
     private func makeBadgeLabel(

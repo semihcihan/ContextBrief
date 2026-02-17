@@ -1,5 +1,8 @@
 import Foundation
 
+private let localDebugResponseDelayNanoseconds: UInt64 = 3_000_000_000
+private let localDebugTitleCharacterLimit = 50
+
 public final class NamingService {
     private let session: URLSession
 
@@ -82,6 +85,10 @@ public final class NamingService {
         systemInstruction: String? = nil,
         prompt: String
     ) async -> String? {
+        if DevelopmentConfig.shared.localDebugResponsesEnabled {
+            try? await Task.sleep(nanoseconds: localDebugResponseDelayNanoseconds)
+            return String(prompt.prefix(localDebugTitleCharacterLimit))
+        }
         do {
             let client = ProviderClientFactory.make(provider: provider, session: session)
             return try await client.requestText(

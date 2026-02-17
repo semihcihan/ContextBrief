@@ -34,7 +34,12 @@ public protocol ProviderClient {
 
 public extension ProviderClient {
     func densify(request: DensificationRequest, apiKey: String, model: String) async throws -> String {
-        try await requestText(
+        if DevelopmentConfig.shared.localDebugResponsesEnabled {
+            AppLogger.debug("Local debug response enabled.")
+            try await Task.sleep(nanoseconds: localDebugResponseDelayNanoseconds)
+            return localDebugPrefixText(request.inputText, maxCharacters: localDebugDensificationCharacterLimit)
+        }
+        return try await requestText(
             request: ProviderTextRequest(
                 systemInstruction: "You produce concise, complete context with no missing key information.",
                 prompt: densificationPrompt(for: request)
@@ -61,6 +66,8 @@ public enum ProviderClientFactory {
 }
 
 private let providerRequestTimeoutSeconds: TimeInterval = 30
+private let localDebugResponseDelayNanoseconds: UInt64 = 3_000_000_000
+private let localDebugDensificationCharacterLimit = 200
 
 private func providerRequestErrorMessage(from data: Data, fallback: String) -> String {
     guard
@@ -135,6 +142,10 @@ private func densificationPrompt(for request: DensificationRequest) -> String {
         "",
         request.inputText
     ].joined(separator: "\n")
+}
+
+private func localDebugPrefixText(_ value: String, maxCharacters: Int) -> String {
+    String(value.prefix(maxCharacters))
 }
 
 private struct OpenAIProviderClient: ProviderClient {
