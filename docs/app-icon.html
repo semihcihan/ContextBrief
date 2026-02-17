@@ -18,66 +18,102 @@
       min-height: 100vh;
       display: grid;
       place-items: center;
-      background: #101314;
+      background: transparent;
       font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     }
 
     main {
       width: 1024px;
       height: 1024px;
-      border-radius: 0;
+      border-radius: 22.5%;
       position: relative;
       overflow: hidden;
       display: grid;
       place-items: center;
       background:
+        radial-gradient(circle at 18% 14%, rgba(213, 244, 229, 0.28) 0%, rgba(213, 244, 229, 0) 42%),
+        radial-gradient(circle at 82% 90%, rgba(112, 168, 143, 0.24) 0%, rgba(112, 168, 143, 0) 48%),
         radial-gradient(circle at center, #4f7d6b 0%, #3e6558 30%, #314c44 58%, #273532 82%, #1b2221 100%);
       box-shadow:
-        inset 0 1px 0 rgba(255, 255, 255, 0.2),
-        0 24px 56px rgba(0, 0, 0, 0.35);
+        inset 0 1px 0 rgba(255, 255, 255, 0.24),
+        inset 0 -30px 78px rgba(9, 14, 13, 0.3);
     }
 
-    .bg-shapes {
+    main::before {
+      content: "";
       position: absolute;
       inset: 0;
-      z-index: 0;
-      opacity: 0.4;
+      background: linear-gradient(
+        180deg,
+        rgba(255, 255, 255, 0.3) 0%,
+        rgba(255, 255, 255, 0.08) 28%,
+        rgba(255, 255, 255, 0) 56%
+      );
+      pointer-events: none;
     }
 
-    h1 {
+    main::after {
+      content: "";
       position: relative;
+      inset: 0;
+      box-shadow: inset 0 0 0 1px rgba(227, 255, 243, 0.14);
+      pointer-events: none;
+    }
+
+    .bg-layer,
+    .fg-layer {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
+
+    .bg-layer {
+      z-index: 0;
+    }
+
+    .fg-layer {
       z-index: 1;
+    }
+
+    .mark {
+      position: absolute;
+      inset: 0;
+      z-index: 2;
+      display: grid;
+      place-items: center;
+      pointer-events: none;
+    }
+
+    .wordmark {
+      position: relative;
       margin: 0;
-      color: #effaf3;
-      letter-spacing: -0.03em;
-      font-family: "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      font-size: 384px;
-      font-weight: 600;
+      color: #214438;
+      letter-spacing: -0.05em;
+      font-size: 246px;
+      font-weight: 660;
       line-height: 1;
-      text-shadow: 0 8px 32px rgba(0, 0, 0, 0.28);
+      transform: translateY(-2px);
+      text-shadow: 0 1px 0 rgba(255, 255, 255, 0.42);
     }
   </style>
 </head>
 <body>
   <main aria-label="Ctx app icon">
-    <svg class="bg-shapes" viewBox="0 0 1024 1024" aria-hidden="true">
-      <defs>
-        <linearGradient id="shapeStroke" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stop-color="#8fd7b8" stop-opacity="0.35" />
-          <stop offset="100%" stop-color="#1e2b29" stop-opacity="0.15" />
-        </linearGradient>
-      </defs>
-      <circle cx="180" cy="210" r="220" fill="#87d4b2" fill-opacity="0.08" />
-      <circle cx="870" cy="820" r="290" fill="#85ceb0" fill-opacity="0.07" />
-      <circle cx="760" cy="250" r="130" fill="#a4e4c8" fill-opacity="0.08" />
-      <rect x="-120" y="540" width="780" height="260" rx="110" transform="rotate(-18 220 670)" fill="#98debe" fill-opacity="0.07" />
-      <rect x="430" y="120" width="560" height="190" rx="95" transform="rotate(18 710 215)" fill="#9bdfc1" fill-opacity="0.05" />
-      <path d="M 70 900 L 360 600 L 500 860 Z" fill="#c6f0dc" fill-opacity="0.08" />
-      <path d="M 620 430 L 930 270 L 990 620 Z" fill="#c4ecda" fill-opacity="0.06" />
-      <circle cx="512" cy="512" r="430" fill="none" stroke="url(#shapeStroke)" stroke-width="2" />
-      <circle cx="512" cy="512" r="340" fill="none" stroke="url(#shapeStroke)" stroke-width="1.5" />
+    <svg class="bg-layer" viewBox="0 0 1024 1024" aria-hidden="true">
+      <circle cx="180" cy="220" r="240" fill="#9ee4c5" fill-opacity="0.14" />
+      <circle cx="850" cy="830" r="300" fill="#8fd7b8" fill-opacity="0.1" />
+      <circle cx="760" cy="250" r="130" fill="#b8edd7" fill-opacity="0.12" />
+      <rect x="-140" y="560" width="820" height="240" rx="108" transform="rotate(-17 270 680)" fill="#9adfbe" fill-opacity="0.1" />
+      <rect x="430" y="90" width="590" height="190" rx="95" transform="rotate(17 725 185)" fill="#b6e8d1" fill-opacity="0.09" />
     </svg>
-    <h1>Ctx</h1>
+    <svg class="fg-layer" viewBox="0 0 1024 1024" aria-hidden="true">
+      <rect x="220" y="220" width="584" height="584" rx="198" fill="#ecfaf3" fill-opacity="0.12" />
+      <rect x="270" y="270" width="484" height="484" rx="164" fill="#ecfaf3" fill-opacity="0.16" />
+      <circle cx="512" cy="512" r="286" fill="none" stroke="#dff7ea" stroke-opacity="0.22" stroke-width="14" />
+    </svg>
+    <div class="mark" aria-hidden="true">
+      <p class="wordmark">Ctx</p>
+    </div>
   </main>
 </body>
 </html>
