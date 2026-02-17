@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ctx App Icon</title>
+  <style>
+    :root {
+      color-scheme: light;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: #101314;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    main {
+      width: 1024px;
+      height: 1024px;
+      border-radius: 0;
+      position: relative;
+      overflow: hidden;
+      display: grid;
+      place-items: center;
+      background:
+        radial-gradient(circle at center, #4f7d6b 0%, #3e6558 30%, #314c44 58%, #273532 82%, #1b2221 100%);
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.2),
+        0 24px 56px rgba(0, 0, 0, 0.35);
+    }
+
+    .bg-shapes {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      opacity: 0.4;
+    }
+
+    h1 {
+      position: relative;
+      z-index: 1;
+      margin: 0;
+      color: #effaf3;
+      letter-spacing: -0.03em;
+      font-family: "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      font-size: 384px;
+      font-weight: 600;
+      line-height: 1;
+      text-shadow: 0 8px 32px rgba(0, 0, 0, 0.28);
+    }
+  </style>
+</head>
+<body>
+  <main aria-label="Ctx app icon">
+    <svg class="bg-shapes" viewBox="0 0 1024 1024" aria-hidden="true">
+      <defs>
+        <linearGradient id="shapeStroke" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#8fd7b8" stop-opacity="0.35" />
+          <stop offset="100%" stop-color="#1e2b29" stop-opacity="0.15" />
+        </linearGradient>
+      </defs>
+      <circle cx="180" cy="210" r="220" fill="#87d4b2" fill-opacity="0.08" />
+      <circle cx="870" cy="820" r="290" fill="#85ceb0" fill-opacity="0.07" />
+      <circle cx="760" cy="250" r="130" fill="#a4e4c8" fill-opacity="0.08" />
+      <rect x="-120" y="540" width="780" height="260" rx="110" transform="rotate(-18 220 670)" fill="#98debe" fill-opacity="0.07" />
+      <rect x="430" y="120" width="560" height="190" rx="95" transform="rotate(18 710 215)" fill="#9bdfc1" fill-opacity="0.05" />
+      <path d="M 70 900 L 360 600 L 500 860 Z" fill="#c6f0dc" fill-opacity="0.08" />
+      <path d="M 620 430 L 930 270 L 990 620 Z" fill="#c4ecda" fill-opacity="0.06" />
+      <circle cx="512" cy="512" r="430" fill="none" stroke="url(#shapeStroke)" stroke-width="2" />
+      <circle cx="512" cy="512" r="340" fill="none" stroke="url(#shapeStroke)" stroke-width="1.5" />
+    </svg>
+    <h1>Ctx</h1>
+  </main>
+</body>
+</html>

@@ -23,7 +23,7 @@ ifeq ($(LOG),1)
 DEBUG_ENV := CONTEXT_GENERATOR_DEBUG_LOGS=1 CONTEXT_GENERATOR_TERMINAL_LOGS=1
 endif
 
-.PHONY: help dev dev-stop log release-app release-dmg run-release-app
+.PHONY: help dev dev-stop log app-icon release-app release-dmg run-release-app
 WATCH_PATTERN := watchexec -e swift --watch Sources --watch Package.swift --restart -- .*swift run $(APP_TARGET)
 APP_BUNDLE := .build/release/$(APP_BUNDLE_NAME).app
 APP_BUNDLE_EXEC := $(APP_BUNDLE)/Contents/MacOS/$(APP_EXECUTABLE_NAME)
@@ -31,6 +31,10 @@ APP_BUNDLE_INFO := $(APP_BUNDLE)/Contents/Info.plist
 APP_BUNDLE_RESOURCES := $(APP_BUNDLE)/Contents/Resources
 APP_BUNDLE_FRAMEWORKS := $(APP_BUNDLE)/Contents/Frameworks
 INFO_PLIST_TEMPLATE := scripts/Info.plist.template
+APP_ICON_SCRIPT := scripts/generate_app_icon.sh
+APP_ICON_SOURCE := docs/app-icon.html
+APP_ICON_OUTPUT_DIR := Sources/ContextGeneratorApp/Resources
+APP_ICON_ICNS := $(APP_ICON_OUTPUT_DIR)/AppIcon.icns
 DMG_NAME ?= $(APP_BUNDLE_NAME).dmg
 DMG_OUTPUT ?= .build/release/$(DMG_NAME)
 
@@ -41,6 +45,7 @@ help:
 		'  make dev                                  Run app with file watching + auto restart' \
 		'  make dev log                              Same as dev, with debug logging enabled' \
 		'  make dev-stop                             Stop watcher and running app process' \
+		'  make app-icon                             Regenerate local AppIcon.icns + AppIcon.iconset from docs/app-icon.html' \
 		'  make release-app VERSION=1.0.0 BUILD_NUMBER=1' \
 		'                                            Build release .app bundle in .build/release/' \
 		'  make release-dmg VERSION=1.0.0 BUILD_NUMBER=1' \
@@ -76,15 +81,22 @@ dev-stop:
 log:
 	@:
 
+app-icon:
+	@test -f "$(APP_ICON_SCRIPT)" || { echo "Missing icon generator script: $(APP_ICON_SCRIPT)"; exit 1; }
+	@test -f "$(APP_ICON_SOURCE)" || { echo "Missing icon source HTML: $(APP_ICON_SOURCE)"; exit 1; }
+	@bash "$(APP_ICON_SCRIPT)" "$(APP_ICON_SOURCE)" "$(APP_ICON_OUTPUT_DIR)" "AppIcon"
+
 # Build distributable .app with templated Info.plist metadata.
 release-app:
 	@env DEVELOPER_DIR=$(DEVELOPER_DIR) swift build -c release
 	@test -f "$(INFO_PLIST_TEMPLATE)" || { echo "Missing plist template: $(INFO_PLIST_TEMPLATE)"; exit 1; }
+	@test -f "$(APP_ICON_ICNS)" || { echo "Missing generated app icon: $(APP_ICON_ICNS)"; exit 1; }
 	@rm -rf "$(APP_BUNDLE)"
 	@mkdir -p "$(APP_BUNDLE)/Contents/MacOS" "$(APP_BUNDLE_RESOURCES)" "$(APP_BUNDLE_FRAMEWORKS)"
 	@cp ".build/release/$(APP_TARGET)" "$(APP_BUNDLE_EXEC)"
 	@cp "Sources/ContextGeneratorApp/Resources/GoogleService-Info.plist" "$(APP_BUNDLE_RESOURCES)/GoogleService-Info.plist"
 	@cp "Sources/ContextGeneratorApp/Resources/config.plist" "$(APP_BUNDLE_RESOURCES)/config.plist"
+	@cp "$(APP_ICON_ICNS)" "$(APP_BUNDLE_RESOURCES)/AppIcon.icns"
 	@for bundle in .build/release/*.bundle; do [ -d "$$bundle" ] || continue; cp -R "$$bundle" "$(APP_BUNDLE_RESOURCES)/"; done
 	@for framework in .build/release/*.framework; do [ -d "$$framework" ] || continue; cp -R "$$framework" "$(APP_BUNDLE_FRAMEWORKS)/"; done
 	# Generate final Info.plist from template placeholders.
