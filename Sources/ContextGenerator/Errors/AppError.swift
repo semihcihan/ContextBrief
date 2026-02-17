@@ -2,6 +2,7 @@ import Foundation
 
 public enum AppError: LocalizedError {
     case noFrontmostApp
+    case captureTargetIsContextBrief
     case noCurrentContext
     case noCaptureToUndo
     case noCaptureToPromote
@@ -15,6 +16,8 @@ public enum AppError: LocalizedError {
         switch self {
         case .noFrontmostApp:
             return "No frontmost app found."
+        case .captureTargetIsContextBrief:
+            return "Context Brief cannot capture its own UI. Switch to another app and try again."
         case .noCurrentContext:
             return "No current context selected."
         case .noCaptureToUndo:

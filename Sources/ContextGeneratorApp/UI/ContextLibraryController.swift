@@ -7,6 +7,7 @@ final class ContextLibraryController: NSViewController, NSOutlineViewDataSource,
     private let exportService: ContextExportService
     private let onSelectionChange: (String) -> Void
     private let retryFailedSnapshot: (UUID) async throws -> Snapshot
+    private let retryFailedSnapshots: ([UUID]) async -> SnapshotProcessingCoordinator.RetryBatchResult
 
     private var contexts: [Context] = []
     private var snapshotsByContextId: [UUID: [Snapshot]] = [:]
@@ -26,13 +27,15 @@ final class ContextLibraryController: NSViewController, NSOutlineViewDataSource,
         repository: ContextRepositorying,
         sessionManager: ContextSessionManager,
         onSelectionChange: @escaping (String) -> Void,
-        retryFailedSnapshot: @escaping (UUID) async throws -> Snapshot
+        retryFailedSnapshot: @escaping (UUID) async throws -> Snapshot,
+        retryFailedSnapshots: @escaping ([UUID]) async -> SnapshotProcessingCoordinator.RetryBatchResult
     ) {
         self.repository = repository
         self.sessionManager = sessionManager
         exportService = ContextExportService(repository: repository)
         self.onSelectionChange = onSelectionChange
         self.retryFailedSnapshot = retryFailedSnapshot
+        self.retryFailedSnapshots = retryFailedSnapshots
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -497,39 +500,18 @@ final class ContextLibraryController: NSViewController, NSOutlineViewDataSource,
         }
         let failedSnapshots = snapshotsByContextId[context.id]?.filter { $0.status == .failed } ?? []
         guard !failedSnapshots.isEmpty else {
-            onSelectionChange("No failed snapshots to retry")
+            onSelectionChange(SnapshotProcessingCoordinator.noFailedSnapshotsMessage)
             return
         }
 
         retryingFailedCurrentContextSnapshots = true
-        onSelectionChange(
-            failedSnapshots.count == 1
-                ? "Retrying 1 failed snapshot..."
-                : "Retrying \(failedSnapshots.count) failed snapshots..."
-        )
+        onSelectionChange(SnapshotProcessingCoordinator.retryingMessage(for: failedSnapshots.count))
         Task {
-            var succeededCount = 0
-            var failedCount = 0
-            for snapshot in failedSnapshots {
-                do {
-                    _ = try await retryFailedSnapshot(snapshot.id)
-                    succeededCount += 1
-                } catch {
-                    failedCount += 1
-                }
-            }
+            let summary = await retryFailedSnapshots(failedSnapshots.map(\.id))
             await MainActor.run {
                 self.restoreCurrentContextIfNeeded(originalCurrentContextId)
                 self.retryingFailedCurrentContextSnapshots = false
-                if failedCount == 0 {
-                    self.onSelectionChange(
-                        succeededCount == 1
-                            ? "Retried 1 failed snapshot"
-                            : "Retried \(succeededCount) failed snapshots"
-                    )
-                } else {
-                    self.onSelectionChange("Retried \(succeededCount), failed \(failedCount)")
-                }
+                self.onSelectionChange(SnapshotProcessingCoordinator.retrySummaryMessage(summary))
                 self.refreshData()
             }
         }

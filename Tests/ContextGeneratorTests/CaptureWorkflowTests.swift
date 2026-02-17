@@ -1,30 +1,6 @@
 import ContextGenerator
 import XCTest
 
-private final class MockCaptureService: ContextCapturing {
-    func capture() throws -> (CapturedSnapshot, Data?) {
-        (
-            CapturedSnapshot(
-                sourceType: .desktopApp,
-                appName: "Terminal",
-                bundleIdentifier: "com.apple.Terminal",
-                windowTitle: "zsh",
-                captureMethod: .hybrid,
-                accessibilityText: "access",
-                ocrText: "ocr",
-                combinedText: "access\no cr",
-                diagnostics: CaptureDiagnostics(
-                    accessibilityLineCount: 1,
-                    ocrLineCount: 1,
-                    processingDurationMs: 80,
-                    usedFallbackOCR: true
-                )
-            ),
-            nil
-        )
-    }
-}
-
 private final class MockDensifier: Densifying {
     func densify(snapshot: CapturedSnapshot, provider: ProviderName, model: String, apiKey: String) async throws -> String {
         "dense-output"
@@ -71,7 +47,6 @@ final class CaptureWorkflowTests: XCTestCase {
         let manager = ContextSessionManager(repository: repo)
         let keychain = MockKeychain()
         let workflow = CaptureWorkflow(
-            captureService: MockCaptureService(),
             sessionManager: manager,
             repository: repo,
             densificationService: MockDensifier(),
@@ -86,7 +61,10 @@ final class CaptureWorkflowTests: XCTestCase {
         try keychain.set("secret", for: "api.openai")
 
         _ = try manager.createNewContext(title: "Current")
-        let result = try await workflow.runCapture()
+        let result = try await workflow.runCapture(
+            capturedSnapshot: makeCapturedSnapshot(),
+            screenshotData: nil
+        )
         XCTAssertEqual(result.snapshot.denseContent, "dense-output")
         XCTAssertEqual(try repo.snapshots(in: result.context.id).count, 1)
     }
@@ -98,7 +76,6 @@ final class CaptureWorkflowTests: XCTestCase {
         let keychain = MockKeychain()
         let densifier = FlakyDensifier()
         let workflow = CaptureWorkflow(
-            captureService: MockCaptureService(),
             sessionManager: manager,
             repository: repo,
             densificationService: densifier,
@@ -113,7 +90,10 @@ final class CaptureWorkflowTests: XCTestCase {
         try keychain.set("secret", for: "api.openai")
         _ = try manager.createNewContext(title: "Current")
 
-        let result = try await workflow.runCapture()
+        let result = try await workflow.runCapture(
+            capturedSnapshot: makeCapturedSnapshot(),
+            screenshotData: nil
+        )
 
         XCTAssertEqual(densifier.calls, 2)
         XCTAssertEqual(result.snapshot.status, .ready)
@@ -127,7 +107,6 @@ final class CaptureWorkflowTests: XCTestCase {
         let manager = ContextSessionManager(repository: repo)
         let keychain = MockKeychain()
         let workflow = CaptureWorkflow(
-            captureService: MockCaptureService(),
             sessionManager: manager,
             repository: repo,
             densificationService: AlwaysFailingDensifier(),
@@ -142,7 +121,10 @@ final class CaptureWorkflowTests: XCTestCase {
         try keychain.set("secret", for: "api.openai")
         _ = try manager.createNewContext(title: "Current")
 
-        let result = try await workflow.runCapture()
+        let result = try await workflow.runCapture(
+            capturedSnapshot: makeCapturedSnapshot(),
+            screenshotData: nil
+        )
         let storedSnapshots = try repo.snapshots(in: result.context.id)
 
         XCTAssertEqual(storedSnapshots.count, 1)
@@ -150,5 +132,24 @@ final class CaptureWorkflowTests: XCTestCase {
         XCTAssertEqual(result.snapshot.retryCount, 1)
         XCTAssertEqual(result.snapshot.denseContent, "")
         XCTAssertEqual(result.snapshot.failureMessage, "provider unavailable")
+    }
+
+    private func makeCapturedSnapshot() -> CapturedSnapshot {
+        CapturedSnapshot(
+            sourceType: .desktopApp,
+            appName: "Terminal",
+            bundleIdentifier: "com.apple.Terminal",
+            windowTitle: "zsh",
+            captureMethod: .hybrid,
+            accessibilityText: "access",
+            ocrText: "ocr",
+            combinedText: "access\no cr",
+            diagnostics: CaptureDiagnostics(
+                accessibilityLineCount: 1,
+                ocrLineCount: 1,
+                processingDurationMs: 80,
+                usedFallbackOCR: true
+            )
+        )
     }
 }
