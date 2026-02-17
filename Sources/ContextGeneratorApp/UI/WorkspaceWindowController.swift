@@ -116,6 +116,12 @@ final class WorkspaceWindowController: NSWindowController {
                 return
             }
             self?.select(section)
+        } onCreateContextFromContextLibrary: { [weak self] in
+            guard let self else {
+                return
+            }
+            self.select(.contextLibrary)
+            self.contextLibraryController.createNewContextFromSidebar()
         }
         select(.setup)
     }
@@ -192,8 +198,10 @@ final class WorkspaceWindowController: NSWindowController {
 private final class WorkspaceSidebarViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate {
     private var items: [SidebarItem] = []
     private var onSelect: ((Int) -> Void)?
+    private var onCreateContextFromContextLibrary: (() -> Void)?
     private let tableView = NSTableView()
     private let scrollView = NSScrollView()
+    private let rowMenu = NSMenu()
 
     override func loadView() {
         view = NSView()
@@ -207,6 +215,7 @@ private final class WorkspaceSidebarViewController: NSViewController, NSTableVie
         tableView.style = .sourceList
         tableView.delegate = self
         tableView.dataSource = self
+        tableView.menu = rowMenu
 
         scrollView.documentView = tableView
         scrollView.hasVerticalScroller = true
@@ -220,11 +229,19 @@ private final class WorkspaceSidebarViewController: NSViewController, NSTableVie
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         ])
+
+        rowMenu.delegate = self
+        rowMenu.autoenablesItems = false
     }
 
-    func configure(items: [SidebarItem], onSelect: @escaping (Int) -> Void) {
+    func configure(
+        items: [SidebarItem],
+        onSelect: @escaping (Int) -> Void,
+        onCreateContextFromContextLibrary: @escaping () -> Void
+    ) {
         self.items = items
         self.onSelect = onSelect
+        self.onCreateContextFromContextLibrary = onCreateContextFromContextLibrary
         if isViewLoaded {
             tableView.reloadData()
         }
@@ -282,6 +299,25 @@ private final class WorkspaceSidebarViewController: NSViewController, NSTableVie
             return
         }
         onSelect?(items[index].section)
+    }
+
+    @objc private func createContextFromSidebar() {
+        onCreateContextFromContextLibrary?()
+    }
+}
+
+extension WorkspaceSidebarViewController: NSMenuDelegate {
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        rowMenu.removeAllItems()
+        let clickedRow = tableView.clickedRow >= 0 ? tableView.clickedRow : tableView.selectedRow
+        guard clickedRow >= 0 else {
+            return
+        }
+        guard items[clickedRow].section == WorkspaceWindowController.Section.contextLibrary.rawValue else {
+            return
+        }
+        tableView.selectRowIndexes(IndexSet(integer: clickedRow), byExtendingSelection: false)
+        rowMenu.addItem(withTitle: "New Context", action: #selector(createContextFromSidebar), keyEquivalent: "")
     }
 }
 

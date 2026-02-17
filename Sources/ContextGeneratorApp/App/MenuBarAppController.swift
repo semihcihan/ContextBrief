@@ -39,6 +39,7 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
     private var snapshotActionsHeadlineMenuItem: NSMenuItem?
     private var undoSnapshotMenuItem: NSMenuItem?
     private var promoteSnapshotMenuItem: NSMenuItem?
+    private var retryFailedSnapshotsMenuItem: NSMenuItem?
     private var newContextMenuItem: NSMenuItem?
     private var separatorAfterContext: NSMenuItem?
     private var separatorAfterSetup: NSMenuItem?
@@ -49,6 +50,7 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
     private var globalHotkeyManager: GlobalHotkeyManager?
     private var areGlobalHotkeysSuspended = false
     private let captureProcessingQueue = CaptureProcessingQueue()
+    private var activeRetryOperations = 0
     private var deferredUndoForInFlightCapture = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -158,6 +160,7 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
         }
         undoSnapshotMenuItem = addMenuItem("Delete Last Snapshot", action: #selector(undoLastCapture), key: "", indentationLevel: 1, menu: menu)
         promoteSnapshotMenuItem = addMenuItem("Move Last Snapshot to New Context", action: #selector(promoteLastCapture), key: "", indentationLevel: 1, menu: menu)
+        retryFailedSnapshotsMenuItem = addMenuItem("Retry Failed Snapshot", action: #selector(retryFailedSnapshots), key: "", indentationLevel: 1, menu: menu)
         separatorAfterActions = .separator()
         if let separatorAfterActions {
             menu.addItem(separatorAfterActions)
@@ -219,12 +222,12 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
             let hasProviderConfiguration = hasProviderConfiguration()
             let setupReady = isSetupReady(state: state)
             let currentContext = try sessionManager.currentContextIfExists()
-            let hasSnapshotInCurrent = try (currentContext.map { context in
-                try repository.lastSnapshot(in: context.id) != nil
-            } ?? false)
-            let lastSnapshot = try (currentContext.map { context in
-                try repository.lastSnapshot(in: context.id)
-            } ?? nil)
+            let snapshotsInCurrent = try (currentContext.map { context in
+                try repository.snapshots(in: context.id)
+            } ?? [])
+            let hasSnapshotInCurrent = !snapshotsInCurrent.isEmpty
+            let lastSnapshot = snapshotsInCurrent.last
+            let failedSnapshotCount = snapshotsInCurrent.filter { $0.status == .failed }.count
             let contextLabel = contextLabel(currentContext: currentContext, hasSnapshotInCurrent: hasSnapshotInCurrent)
             updateActionHeadlines(contextLabel: contextLabel, lastSnapshot: lastSnapshot)
             setTopStatusLine(text: processingStatusText())
@@ -242,18 +245,23 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
             } else {
                 setupStatusMenuItem?.title = "Setup required"
             }
-            setHidden(statusMenuItem, hidden: !isCaptureInProgress)
-            setHidden(separatorAfterContext, hidden: !isCaptureInProgress)
+            setHidden(statusMenuItem, hidden: !isAnyProcessing)
+            setHidden(separatorAfterContext, hidden: !isAnyProcessing)
 
             addSnapshotMenuItem?.isEnabled = setupReady
-            undoSnapshotMenuItem?.isEnabled = hasSnapshotInCurrent || isCaptureInProgress
-            promoteSnapshotMenuItem?.isEnabled = hasSnapshotInCurrent
-            newContextMenuItem?.isEnabled = setupReady && hasSnapshotInCurrent
-            copyDenseMenuItem?.isEnabled = hasSnapshotInCurrent
+            undoSnapshotMenuItem?.isEnabled = (hasSnapshotInCurrent || isCaptureInProgress) && !isAnyProcessing
+            promoteSnapshotMenuItem?.isEnabled = hasSnapshotInCurrent && !isAnyProcessing
+            retryFailedSnapshotsMenuItem?.isEnabled = setupReady && failedSnapshotCount > 0 && !isAnyProcessing
+            retryFailedSnapshotsMenuItem?.title = failedSnapshotCount > 1
+                ? "Retry Failed Snapshots (\(failedSnapshotCount))"
+                : "Retry Failed Snapshot"
+            newContextMenuItem?.isEnabled = setupReady && (hasSnapshotInCurrent || isCaptureInProgress)
+            copyDenseMenuItem?.isEnabled = hasSnapshotInCurrent && !isAnyProcessing
             AppLogger.debug(
-                "refreshMenuState onboardingCompleted=\(state.onboardingCompleted) hasPermissions=\(hasPermissions) hasProviderConfiguration=\(hasProviderConfiguration) setupReady=\(setupReady) currentContextId=\(currentContext?.id.uuidString ?? "-") currentContextTitle=\(currentContext?.title ?? "-") hasSnapshotInCurrent=\(hasSnapshotInCurrent) captureInProgress=\(isCaptureInProgress) queuedCaptures=\(captureProcessingQueue.queuedCount) deferredUndo=\(deferredUndoForInFlightCapture)"
+                "refreshMenuState onboardingCompleted=\(state.onboardingCompleted) hasPermissions=\(hasPermissions) hasProviderConfiguration=\(hasProviderConfiguration) setupReady=\(setupReady) currentContextId=\(currentContext?.id.uuidString ?? "-") currentContextTitle=\(currentContext?.title ?? "-") hasSnapshotInCurrent=\(hasSnapshotInCurrent) failedSnapshots=\(failedSnapshotCount) captureInProgress=\(isCaptureInProgress) activeRetryOperations=\(activeRetryOperations) queuedCaptures=\(captureProcessingQueue.queuedCount) deferredUndo=\(deferredUndoForInFlightCapture)"
             )
             applySetupVisibility(setupReady: setupReady)
+            setHidden(retryFailedSnapshotsMenuItem, hidden: !setupReady || failedSnapshotCount == 0)
         } catch {
             reportUnexpectedNonFatal(error, context: "refresh_menu_state")
             setupStatusMenuItem?.title = "Setup required"
@@ -263,6 +271,8 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
             addSnapshotMenuItem?.isEnabled = false
             undoSnapshotMenuItem?.isEnabled = false
             promoteSnapshotMenuItem?.isEnabled = false
+            retryFailedSnapshotsMenuItem?.isEnabled = false
+            setHidden(retryFailedSnapshotsMenuItem, hidden: true)
             newContextMenuItem?.isEnabled = false
             copyDenseMenuItem?.isEnabled = false
             AppLogger.error("refreshMenuState failed: \(error.localizedDescription)")
@@ -282,6 +292,7 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
         setHidden(snapshotActionsHeadlineMenuItem, hidden: hideActions)
         setHidden(undoSnapshotMenuItem, hidden: hideActions)
         setHidden(promoteSnapshotMenuItem, hidden: hideActions)
+        setHidden(retryFailedSnapshotsMenuItem, hidden: hideActions)
         setHidden(separatorAfterActions, hidden: hideActions)
         setHidden(newContextMenuItem, hidden: !setupReady)
     }
@@ -456,12 +467,9 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
     @objc private func undoLastCapture() {
         AppLogger.debug("undoLastCapture tapped")
         eventTracker.track(.undoRequested)
-        if isCaptureInProgress {
-            deferredUndoForInFlightCapture = true
-            updateFeedback("Will remove processing snapshot when ready")
+        guard !isAnyProcessing else {
+            updateFeedback("Please wait for current processing to finish")
             refreshMenuState()
-            eventTracker.track(.undoRequested, parameters: ["mode": "deferred"])
-            AppLogger.info("undoLastCapture queued for in-flight capture")
             return
         }
         guard hasSnapshotsInCurrentContext() else {
@@ -485,6 +493,11 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
     @objc private func promoteLastCapture() {
         AppLogger.debug("promoteLastCapture tapped")
         eventTracker.track(.promoteRequested)
+        guard !isAnyProcessing else {
+            updateFeedback("Please wait for current processing to finish")
+            refreshMenuState()
+            return
+        }
         guard hasSnapshotsInCurrentContext() else {
             updateFeedback("No snapshot to move")
             refreshMenuState()
@@ -510,10 +523,65 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
         }
     }
 
+    @objc private func retryFailedSnapshots() {
+        guard !isAnyProcessing else {
+            updateFeedback("Please wait for current processing to finish")
+            refreshMenuState()
+            return
+        }
+        guard let context = ((try? sessionManager.currentContextIfExists()) ?? nil) else {
+            updateFeedback("No context selected")
+            refreshMenuState()
+            return
+        }
+        guard let failedSnapshots = try? repository.snapshots(in: context.id).filter({ $0.status == .failed }), !failedSnapshots.isEmpty else {
+            updateFeedback("No failed snapshots to retry")
+            refreshMenuState()
+            return
+        }
+
+        updateFeedback(
+            failedSnapshots.count == 1
+                ? "Retrying 1 failed snapshot..."
+                : "Retrying \(failedSnapshots.count) failed snapshots..."
+        )
+        Task {
+            await MainActor.run { [weak self] in
+                self?.beginRetryOperation()
+            }
+            var succeededCount = 0
+            var failedCount = 0
+            for snapshot in failedSnapshots {
+                do {
+                    _ = try await snapshotRetryWorkflow.retryFailedSnapshot(snapshot.id)
+                    succeededCount += 1
+                } catch {
+                    failedCount += 1
+                    AppLogger.error("retryFailedSnapshots failed snapshotId=\(snapshot.id.uuidString) error=\(error.localizedDescription)")
+                }
+            }
+            let finalSucceededCount = succeededCount
+            let finalFailedCount = failedCount
+            await MainActor.run { [weak self] in
+                self?.endRetryOperation()
+                if finalFailedCount == 0 {
+                    self?.updateFeedback(
+                        finalSucceededCount == 1
+                            ? "Retried 1 failed snapshot"
+                            : "Retried \(finalSucceededCount) failed snapshots"
+                    )
+                } else {
+                    self?.updateFeedback("Retried \(finalSucceededCount), failed \(finalFailedCount)")
+                }
+                self?.refreshMenuState()
+            }
+        }
+    }
+
     @objc private func startNewContext() {
         AppLogger.debug("startNewContext tapped")
         eventTracker.track(.newContextRequested)
-        guard hasSnapshotsInCurrentContext() else {
+        guard hasSnapshotsInCurrentContext() || isCaptureInProgress else {
             updateFeedback("Current context is already empty")
             refreshMenuState()
             return
@@ -550,6 +618,11 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
                 "source": source
             ]
         )
+        guard !isAnyProcessing else {
+            updateFeedback("Please wait for current processing to finish")
+            refreshMenuState()
+            return
+        }
         guard hasSnapshotsInCurrentContext() else {
             updateFeedback("Nothing to copy yet")
             refreshMenuState()
@@ -565,6 +638,7 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
                     "error": "failed_snapshot_in_current_context"
                 ]
             )
+            presentFailedSnapshotsAlert()
             workspaceWindowController().show(section: .contextLibrary, sender: self)
             refreshMenuState()
             return
@@ -638,7 +712,21 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
                 guard let self else {
                     throw CancellationError()
                 }
-                return try await self.snapshotRetryWorkflow.retryFailedSnapshot(snapshotId)
+                await MainActor.run {
+                    self.beginRetryOperation()
+                }
+                do {
+                    let retried = try await self.snapshotRetryWorkflow.retryFailedSnapshot(snapshotId)
+                    await MainActor.run {
+                        self.endRetryOperation()
+                    }
+                    return retried
+                } catch {
+                    await MainActor.run {
+                        self.endRetryOperation()
+                    }
+                    throw error
+                }
             },
             onSetupComplete: { [weak self] in
                 self?.updateFeedback("Setup complete")
@@ -687,14 +775,31 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
         captureProcessingQueue.isCaptureInProgress
     }
 
+    private var isAnyProcessing: Bool {
+        isCaptureInProgress || activeRetryOperations > 0
+    }
+
     private func processingStatusText() -> String? {
-        guard isCaptureInProgress else {
+        if isCaptureInProgress {
+            guard captureProcessingQueue.queuedCount > 0 else {
+                return "Processing new snapshot..."
+            }
+            return "Processing new snapshot... (\(captureProcessingQueue.queuedCount) queued)"
+        }
+        guard activeRetryOperations > 0 else {
             return nil
         }
-        guard captureProcessingQueue.queuedCount > 0 else {
-            return "Processing new snapshot..."
-        }
-        return "Processing new snapshot... (\(captureProcessingQueue.queuedCount) queued)"
+        return "Processing new snapshot..."
+    }
+
+    private func beginRetryOperation() {
+        activeRetryOperations += 1
+        refreshMenuState()
+    }
+
+    private func endRetryOperation() {
+        activeRetryOperations = max(0, activeRetryOperations - 1)
+        refreshMenuState()
     }
 
     private func hasSnapshotsInCurrentContext() -> Bool {
@@ -713,7 +818,7 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
 
     private func updateActionHeadlines(contextLabel: String, lastSnapshot: Snapshot?) {
         let snapshotPreview = snapshotPreviewText(snapshot: lastSnapshot)
-        let snapshotLabel = isCaptureInProgress ? "Processing..." : snapshotPreview
+        let snapshotLabel = isAnyProcessing ? "Processing..." : snapshotPreview
         applyHeadline(
             item: contextActionsHeadlineMenuItem,
             title: contextLabel
@@ -749,6 +854,15 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
             string: text,
             attributes: [.foregroundColor: NSColor.secondaryLabelColor]
         )
+    }
+
+    private func presentFailedSnapshotsAlert() {
+        let alert = NSAlert()
+        alert.messageText = "Failed Snapshots Found"
+        alert.informativeText = "Current context contains failed snapshots. Retry or delete them in Context Library before copying."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Open Context Library")
+        _ = alert.runModal()
     }
 
     private func applyHeadline(item: NSMenuItem?, title: String) {

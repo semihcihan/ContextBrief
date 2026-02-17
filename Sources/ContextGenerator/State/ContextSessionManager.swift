@@ -172,6 +172,15 @@ public final class ContextSessionManager {
     }
 
     @discardableResult
+    public func moveSnapshotToNewContext(_ snapshotId: UUID, title: String? = nil) throws -> (snapshot: Snapshot, context: Context) {
+        let context = try createNewContext(title: title)
+        guard let moved = try repository.moveSnapshot(id: snapshotId, to: context.id) else {
+            throw AppError.snapshotNotFound
+        }
+        return (moved, context)
+    }
+
+    @discardableResult
     public func restoreTrashedContext(_ trashedContextId: UUID, setAsCurrent: Bool = false) throws -> Context {
         let restored = try repository.restoreTrashedContext(id: trashedContextId)
         if setAsCurrent {
