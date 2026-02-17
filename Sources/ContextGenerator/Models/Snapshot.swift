@@ -12,6 +12,11 @@ public enum CaptureMethod: String, Codable {
     case none
 }
 
+public enum SnapshotStatus: String, Codable {
+    case ready
+    case failed
+}
+
 public struct Snapshot: Codable, Identifiable, Hashable {
     public let id: UUID
     public let contextId: UUID
@@ -31,6 +36,10 @@ public struct Snapshot: Codable, Identifiable, Hashable {
     public let accessibilityLineCount: Int
     public let ocrLineCount: Int
     public let processingDurationMs: Int
+    public var status: SnapshotStatus
+    public var failureMessage: String?
+    public var retryCount: Int
+    public var lastAttemptAt: Date?
 
     public init(
         id: UUID = UUID(),
@@ -50,7 +59,11 @@ public struct Snapshot: Codable, Identifiable, Hashable {
         model: String? = nil,
         accessibilityLineCount: Int = 0,
         ocrLineCount: Int = 0,
-        processingDurationMs: Int = 0
+        processingDurationMs: Int = 0,
+        status: SnapshotStatus = .ready,
+        failureMessage: String? = nil,
+        retryCount: Int = 0,
+        lastAttemptAt: Date? = nil
     ) {
         self.id = id
         self.contextId = contextId
@@ -71,6 +84,10 @@ public struct Snapshot: Codable, Identifiable, Hashable {
         self.accessibilityLineCount = accessibilityLineCount
         self.ocrLineCount = ocrLineCount
         self.processingDurationMs = processingDurationMs
+        self.status = status
+        self.failureMessage = failureMessage
+        self.retryCount = retryCount
+        self.lastAttemptAt = lastAttemptAt
     }
 
     enum CodingKeys: String, CodingKey {
@@ -92,6 +109,10 @@ public struct Snapshot: Codable, Identifiable, Hashable {
         case accessibilityLineCount
         case ocrLineCount
         case processingDurationMs
+        case status
+        case failureMessage
+        case retryCount
+        case lastAttemptAt
     }
 
     public init(from decoder: Decoder) throws {
@@ -114,6 +135,10 @@ public struct Snapshot: Codable, Identifiable, Hashable {
         accessibilityLineCount = try container.decodeIfPresent(Int.self, forKey: .accessibilityLineCount) ?? 0
         ocrLineCount = try container.decodeIfPresent(Int.self, forKey: .ocrLineCount) ?? 0
         processingDurationMs = try container.decodeIfPresent(Int.self, forKey: .processingDurationMs) ?? 0
+        status = try container.decodeIfPresent(SnapshotStatus.self, forKey: .status) ?? .ready
+        failureMessage = try container.decodeIfPresent(String.self, forKey: .failureMessage)
+        retryCount = try container.decodeIfPresent(Int.self, forKey: .retryCount) ?? 0
+        lastAttemptAt = try container.decodeIfPresent(Date.self, forKey: .lastAttemptAt)
     }
 
     public static func == (lhs: Snapshot, rhs: Snapshot) -> Bool {

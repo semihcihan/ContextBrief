@@ -216,4 +216,49 @@ final class ContextSessionManagerTests: XCTestCase {
         try manager.deleteTrashedContextPermanently(trashed[0].id)
         XCTAssertTrue(try manager.trashedContexts().isEmpty)
     }
+
+    func testHasFailedSnapshotsInCurrentContext() throws {
+        let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let repo = ContextRepository(rootURL: tempRoot)
+        let manager = ContextSessionManager(repository: repo)
+        _ = try manager.createNewContext(title: "Context")
+
+        let capture = CapturedSnapshot(
+            sourceType: .desktopApp,
+            appName: "Notes",
+            bundleIdentifier: "com.apple.Notes",
+            windowTitle: "Notes",
+            captureMethod: .accessibility,
+            accessibilityText: "abc",
+            ocrText: "",
+            combinedText: "abc",
+            diagnostics: CaptureDiagnostics(
+                accessibilityLineCount: 1,
+                ocrLineCount: 0,
+                processingDurationMs: 40,
+                usedFallbackOCR: false
+            )
+        )
+
+        _ = try manager.appendSnapshot(
+            rawCapture: capture,
+            denseContent: "dense",
+            provider: .openai,
+            model: "gpt-5-nano",
+            status: .ready
+        )
+        XCTAssertFalse(try manager.hasFailedSnapshotsInCurrentContext())
+
+        _ = try manager.appendSnapshot(
+            rawCapture: capture,
+            denseContent: "",
+            provider: .openai,
+            model: "gpt-5-nano",
+            status: .failed,
+            failureMessage: "provider failed",
+            retryCount: 1,
+            lastAttemptAt: Date()
+        )
+        XCTAssertTrue(try manager.hasFailedSnapshotsInCurrentContext())
+    }
 }

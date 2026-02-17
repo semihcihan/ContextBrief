@@ -5,10 +5,12 @@ final class ContextLibraryController: NSViewController, NSOutlineViewDataSource,
     private let repository: ContextRepositorying
     private let sessionManager: ContextSessionManager
     private let onSelectionChange: (String) -> Void
+    private let retryFailedSnapshot: (UUID) async throws -> Snapshot
 
     private var contexts: [Context] = []
     private var snapshotsByContextId: [UUID: [Snapshot]] = [:]
     private var currentContextId: UUID?
+    private var retryingSnapshotId: UUID?
 
     private let outlineView = NSOutlineView()
     private let outlineScrollView = NSScrollView()
@@ -20,11 +22,13 @@ final class ContextLibraryController: NSViewController, NSOutlineViewDataSource,
     init(
         repository: ContextRepositorying,
         sessionManager: ContextSessionManager,
-        onSelectionChange: @escaping (String) -> Void
+        onSelectionChange: @escaping (String) -> Void,
+        retryFailedSnapshot: @escaping (UUID) async throws -> Snapshot
     ) {
         self.repository = repository
         self.sessionManager = sessionManager
         self.onSelectionChange = onSelectionChange
+        self.retryFailedSnapshot = retryFailedSnapshot
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -165,23 +169,7 @@ final class ContextLibraryController: NSViewController, NSOutlineViewDataSource,
             return contextCellView(context: context)
         }
         if let snapshot = item as? Snapshot {
-            let identifier = NSUserInterfaceItemIdentifier("snapshotCell")
-            let cell = outlineView.makeView(withIdentifier: identifier, owner: self) as? NSTableCellView ?? {
-                let created = NSTableCellView()
-                created.identifier = identifier
-                let label = NSTextField(labelWithString: "")
-                label.translatesAutoresizingMaskIntoConstraints = false
-                created.textField = label
-                created.addSubview(label)
-                NSLayoutConstraint.activate([
-                    label.leadingAnchor.constraint(equalTo: created.leadingAnchor, constant: 6),
-                    label.trailingAnchor.constraint(equalTo: created.trailingAnchor, constant: -6),
-                    label.centerYAnchor.constraint(equalTo: created.centerYAnchor)
-                ])
-                return created
-            }()
-            cell.textField?.stringValue = "\(snapshot.sequence). \(snapshot.title)"
-            return cell
+            return snapshotCellView(snapshot: snapshot)
         }
         return nil
     }
@@ -217,6 +205,38 @@ final class ContextLibraryController: NSViewController, NSOutlineViewDataSource,
         return container
     }
 
+    private func snapshotCellView(snapshot: Snapshot) -> NSView {
+        let container = NSTableCellView()
+        let rowView = NSStackView()
+        rowView.orientation = .horizontal
+        rowView.alignment = .centerY
+        rowView.spacing = 6
+        rowView.translatesAutoresizingMaskIntoConstraints = false
+
+        let title = NSTextField(labelWithString: "\(snapshot.sequence). \(snapshot.title)")
+        title.lineBreakMode = .byTruncatingTail
+        title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        rowView.addArrangedSubview(title)
+
+        if snapshot.status == .failed {
+            rowView.addArrangedSubview(
+                makeBadgeLabel(
+                    text: "Failed",
+                    textColor: NSColor.systemRed,
+                    backgroundColor: NSColor.systemRed.withAlphaComponent(0.18)
+                )
+            )
+        }
+
+        container.addSubview(rowView)
+        NSLayoutConstraint.activate([
+            rowView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 6),
+            rowView.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -6),
+            rowView.centerYAnchor.constraint(equalTo: container.centerYAnchor)
+        ])
+        return container
+    }
+
     private func showSelectionDetails() {
         guard let selectedItem = outlineView.item(atRow: outlineView.selectedRow) else {
             detailTextView.string = "Select a context or snapshot."
@@ -234,17 +254,30 @@ final class ContextLibraryController: NSViewController, NSOutlineViewDataSource,
         guard let snapshot = selectedItem as? Snapshot else {
             return
         }
-        detailTextView.string = [
+        var details = [
             "Snapshot \(snapshot.sequence): \(snapshot.title)",
             "App: \(snapshot.appName)",
             "Window: \(snapshot.windowTitle)",
+            "Status: \(snapshot.status == .failed ? "Failed" : "Ready")",
+            "Retries: \(snapshot.retryCount)"
+        ]
+        if let lastAttemptAt = snapshot.lastAttemptAt {
+            details.append("Last Attempt: \(lastAttemptAt.formatted())")
+        }
+        if snapshot.status == .failed, let failureMessage = snapshot.failureMessage, !failureMessage.isEmpty {
+            details.append("")
+            details.append("Failure")
+            details.append(failureMessage)
+        }
+        details.append(contentsOf: [
             "",
             "Dense Content",
             snapshot.denseContent,
             "",
             "Raw Content",
             snapshot.rawContent
-        ].joined(separator: "\n")
+        ])
+        detailTextView.string = details.joined(separator: "\n")
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
@@ -275,6 +308,10 @@ final class ContextLibraryController: NSViewController, NSOutlineViewDataSource,
 
     private func populateSnapshotMenu(snapshot: Snapshot) {
         snapshotMenu.removeAllItems()
+        if snapshot.status == .failed {
+            let retryItem = snapshotMenu.addItem(withTitle: "Retry", action: #selector(retrySelectedSnapshot), keyEquivalent: "")
+            retryItem.isEnabled = retryingSnapshotId != snapshot.id
+        }
         if snapshot.contextId != currentContextId {
             snapshotMenu.addItem(withTitle: "Move To Current Context", action: #selector(moveSelectedSnapshotToCurrentContext), keyEquivalent: "")
         }
@@ -365,6 +402,33 @@ final class ContextLibraryController: NSViewController, NSOutlineViewDataSource,
         }
     }
 
+    @objc private func retrySelectedSnapshot() {
+        guard let snapshot = selectedSnapshot(), snapshot.status == .failed else {
+            return
+        }
+        guard retryingSnapshotId == nil else {
+            return
+        }
+        retryingSnapshotId = snapshot.id
+        onSelectionChange("Retrying \(snapshot.title)...")
+        Task {
+            do {
+                let retried = try await retryFailedSnapshot(snapshot.id)
+                await MainActor.run {
+                    self.retryingSnapshotId = nil
+                    self.onSelectionChange("Retry succeeded for \(retried.title)")
+                    self.refreshData()
+                }
+            } catch {
+                await MainActor.run {
+                    self.retryingSnapshotId = nil
+                    self.onSelectionChange("Retry failed: \(error.localizedDescription)")
+                    self.refreshData()
+                }
+            }
+        }
+    }
+
     private func selectedContext() -> Context? {
         if let context = outlineView.item(atRow: outlineView.selectedRow) as? Context {
             return context
@@ -379,14 +443,22 @@ final class ContextLibraryController: NSViewController, NSOutlineViewDataSource,
         outlineView.item(atRow: outlineView.selectedRow) as? Snapshot
     }
 
-    private func makeBadgeLabel(text: String, emphasis: Bool = false) -> NSTextField {
+    private func makeBadgeLabel(
+        text: String,
+        emphasis: Bool = false,
+        textColor: NSColor? = nil,
+        backgroundColor: NSColor? = nil
+    ) -> NSTextField {
         let label = NSTextField(labelWithString: text)
         label.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
-        label.textColor = emphasis ? NSColor.white : NSColor.secondaryLabelColor
+        label.textColor = textColor ?? (emphasis ? NSColor.white : NSColor.secondaryLabelColor)
         label.wantsLayer = true
         label.layer?.cornerRadius = 8
         label.layer?.masksToBounds = true
-        label.layer?.backgroundColor = (emphasis ? NSColor.systemBlue : NSColor.quaternaryLabelColor).cgColor
+        label.layer?.backgroundColor = (
+            backgroundColor
+            ?? (emphasis ? NSColor.systemBlue : NSColor.quaternaryLabelColor)
+        ).cgColor
         label.alignment = .center
         label.cell?.usesSingleLineMode = true
         label.setContentHuggingPriority(.required, for: .horizontal)

@@ -17,7 +17,7 @@ public final class ContextExportService {
             throw AppError.contextNotFound
         }
 
-        let snapshots = try repository.snapshots(in: context.id)
+        let snapshots = try repository.snapshots(in: context.id).filter { $0.status == .ready }
         let body = snapshots.enumerated().map { index, snapshot in
             "[\(index + 1)] \(snapshot.denseContent)"
         }.joined(separator: "\n\n")

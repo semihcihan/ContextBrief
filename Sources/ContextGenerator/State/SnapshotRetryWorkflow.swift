@@ -1,0 +1,132 @@
+import Foundation
+
+public final class SnapshotRetryWorkflow {
+    private let repository: ContextRepositorying
+    private let densificationService: Densifying
+    private let keychain: KeychainServicing
+
+    public init(
+        repository: ContextRepositorying,
+        densificationService: Densifying,
+        keychain: KeychainServicing
+    ) {
+        self.repository = repository
+        self.densificationService = densificationService
+        self.keychain = keychain
+    }
+
+    @discardableResult
+    public func retryFailedSnapshot(_ snapshotId: UUID) async throws -> Snapshot {
+        guard let snapshot = try repository.snapshot(id: snapshotId) else {
+            throw AppError.snapshotNotFound
+        }
+        guard snapshot.status == .failed else {
+            return snapshot
+        }
+        guard
+            let providerRawValue = snapshot.provider,
+            let provider = ProviderName(rawValue: providerRawValue)
+        else {
+            throw AppError.providerNotConfigured
+        }
+        let model = snapshot.model ?? ""
+        guard provider == .apple || !model.isEmpty else {
+            throw AppError.providerNotConfigured
+        }
+        let apiKey = try keychain.get("api.\(provider.rawValue)") ?? ""
+        guard provider == .apple || !apiKey.isEmpty else {
+            throw AppError.keyNotConfigured
+        }
+
+        let nextRetryCount = snapshot.retryCount + 1
+        let attemptedAt = Date()
+        let capturedSnapshot = CapturedSnapshot(
+            id: snapshot.id,
+            capturedAt: snapshot.createdAt,
+            sourceType: snapshot.sourceType,
+            appName: snapshot.appName,
+            bundleIdentifier: snapshot.bundleIdentifier,
+            windowTitle: snapshot.windowTitle,
+            captureMethod: snapshot.captureMethod,
+            accessibilityText: snapshot.rawContent,
+            ocrText: snapshot.ocrContent,
+            combinedText: snapshot.rawContent,
+            diagnostics: CaptureDiagnostics(
+                accessibilityLineCount: snapshot.accessibilityLineCount,
+                ocrLineCount: snapshot.ocrLineCount,
+                processingDurationMs: snapshot.processingDurationMs,
+                usedFallbackOCR: snapshot.ocrLineCount > 0
+            )
+        )
+        do {
+            let dense = try await densificationService.densify(
+                snapshot: capturedSnapshot,
+                provider: provider,
+                model: model,
+                apiKey: apiKey
+            )
+            let updated = makeUpdatedSnapshot(
+                from: snapshot,
+                denseContent: dense,
+                status: .ready,
+                failureMessage: nil,
+                retryCount: nextRetryCount,
+                lastAttemptAt: attemptedAt
+            )
+            try repository.updateSnapshot(updated)
+            return updated
+        } catch {
+            let updated = makeUpdatedSnapshot(
+                from: snapshot,
+                denseContent: snapshot.denseContent,
+                status: .failed,
+                failureMessage: errorMessage(from: error),
+                retryCount: nextRetryCount,
+                lastAttemptAt: attemptedAt
+            )
+            try repository.updateSnapshot(updated)
+            throw error
+        }
+    }
+
+    private func makeUpdatedSnapshot(
+        from snapshot: Snapshot,
+        denseContent: String,
+        status: SnapshotStatus,
+        failureMessage: String?,
+        retryCount: Int,
+        lastAttemptAt: Date?
+    ) -> Snapshot {
+        Snapshot(
+            id: snapshot.id,
+            contextId: snapshot.contextId,
+            createdAt: snapshot.createdAt,
+            sequence: snapshot.sequence,
+            title: snapshot.title,
+            sourceType: snapshot.sourceType,
+            appName: snapshot.appName,
+            bundleIdentifier: snapshot.bundleIdentifier,
+            windowTitle: snapshot.windowTitle,
+            captureMethod: snapshot.captureMethod,
+            rawContent: snapshot.rawContent,
+            ocrContent: snapshot.ocrContent,
+            denseContent: denseContent,
+            provider: snapshot.provider,
+            model: snapshot.model,
+            accessibilityLineCount: snapshot.accessibilityLineCount,
+            ocrLineCount: snapshot.ocrLineCount,
+            processingDurationMs: snapshot.processingDurationMs,
+            status: status,
+            failureMessage: failureMessage,
+            retryCount: retryCount,
+            lastAttemptAt: lastAttemptAt
+        )
+    }
+
+    private func errorMessage(from error: Error) -> String {
+        if let appError = error as? AppError {
+            return appError.localizedDescription
+        }
+        return error.localizedDescription
+    }
+}
