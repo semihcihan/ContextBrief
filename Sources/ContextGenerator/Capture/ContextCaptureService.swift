@@ -506,9 +506,6 @@ public final class ContextCaptureService: ContextCapturing {
     }
 
     private func performAXRead<T>(_ block: () -> T) -> T {
-        if Thread.isMainThread {
-            return block()
-        }
-        return DispatchQueue.main.sync(execute: block)
+        block()
     }
 }

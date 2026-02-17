@@ -50,6 +50,7 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
     private var globalHotkeyManager: GlobalHotkeyManager?
     private var areGlobalHotkeysSuspended = false
     private let captureProcessingQueue = CaptureProcessingQueue()
+    private let captureExecutionQueue = DispatchQueue(label: "com.contextbrief.capture.execution", qos: .userInitiated)
     private var activeRetryOperations = 0
     private var deferredUndoForInFlightCapture = false
 
@@ -327,38 +328,12 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
             return
         }
 
-        let queuedRequest: QueuedCaptureRequest
-        do {
-            let (capturedSnapshot, screenshotData) = try captureService.capture()
-            queuedRequest = QueuedCaptureRequest(
-                source: source,
-                capturedSnapshot: capturedSnapshot,
-                screenshotData: screenshotData
-            )
-        } catch {
-            reportUnexpectedNonFatal(error, context: "capture_snapshot")
-            if let appError = error as? AppError {
-                updateFeedback("Snapshot failed: \(appError.localizedDescription)")
-            } else {
-                updateFeedback("Snapshot failed: \(error.localizedDescription)")
-            }
-            eventTracker.track(
-                .captureFailed,
-                parameters: [
-                    "stage": "capture",
-                    "error": analyticsErrorCode(error)
-                ]
-            )
-            AppLogger.error("Capture snapshot failed source=\(source) error=\(error.localizedDescription)")
-            refreshMenuState()
-            return
-        }
-
+        let queuedRequest = QueuedCaptureRequest(source: source)
         switch captureProcessingQueue.requestCapture(queuedRequest) {
         case .queued(let queuedCount):
             updateFeedback(queuedCount == 1 ? "Snapshot queued for processing" : "\(queuedCount) snapshots queued for processing")
             AppLogger.info(
-                "Capture queued source=\(source) queuedCount=\(queuedCount) capturedSnapshot=\(queuedRequest.capturedSnapshot.id.uuidString)"
+                "Capture queued source=\(source) queuedCount=\(queuedCount)"
             )
             refreshMenuState()
         case .startNow(let request):
@@ -404,16 +379,50 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
 
     private func startCaptureProcessing(_ request: QueuedCaptureRequest) {
         AppLogger.info(
-            "Capture processing started source=\(request.source) capturedSnapshot=\(request.capturedSnapshot.id.uuidString)"
+            "Capture processing started source=\(request.source)"
         )
         eventTracker.track(.captureStarted, parameters: ["source": request.source])
         refreshMenuState()
         Task {
             do {
-                let result = try await workflow.runCapture(
-                    capturedSnapshot: request.capturedSnapshot,
-                    screenshotData: request.screenshotData
+                let (capturedSnapshot, screenshotData) = try await captureSnapshot()
+                AppLogger.debug(
+                    "Capture snapshot created source=\(request.source) capturedSnapshot=\(capturedSnapshot.id.uuidString)"
                 )
+                let result: CaptureWorkflowResult
+                do {
+                    result = try await workflow.runCapture(
+                        capturedSnapshot: capturedSnapshot,
+                        screenshotData: screenshotData
+                    )
+                } catch {
+                    reportUnexpectedNonFatal(error, context: "capture_workflow")
+                    await MainActor.run { [weak self] in
+                        self?.deferredUndoForInFlightCapture = false
+                    }
+                    if let appError = error as? AppError {
+                        switch appError {
+                        case .providerRequestFailed(let details):
+                            updateFeedback("Model request failed: \(details)")
+                        default:
+                            updateFeedback("Snapshot failed: \(appError.localizedDescription)")
+                        }
+                    } else {
+                        updateFeedback("Snapshot failed: \(error.localizedDescription)")
+                    }
+                    eventTracker.track(
+                        .captureFailed,
+                        parameters: [
+                            "stage": "workflow",
+                            "error": analyticsErrorCode(error)
+                        ]
+                    )
+                    AppLogger.error("Capture failed: \(error.localizedDescription)")
+                    await MainActor.run { [weak self] in
+                        self?.completeCaptureAndStartNextIfNeeded()
+                    }
+                    return
+                }
                 let removedInFlight = await MainActor.run { [weak self] in
                     self?.consumeDeferredUndoAfterCapture() ?? false
                 }
@@ -450,30 +459,37 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
                 }
                 AppLogger.info("Capture complete snapshot=\(result.snapshot.id.uuidString)")
             } catch {
-                reportUnexpectedNonFatal(error, context: "capture_workflow")
+                reportUnexpectedNonFatal(error, context: "capture_snapshot")
                 await MainActor.run { [weak self] in
                     self?.deferredUndoForInFlightCapture = false
                 }
                 if let appError = error as? AppError {
-                    switch appError {
-                    case .providerRequestFailed(let details):
-                        updateFeedback("Model request failed: \(details)")
-                    default:
-                        updateFeedback("Snapshot failed: \(appError.localizedDescription)")
-                    }
+                    updateFeedback("Snapshot failed: \(appError.localizedDescription)")
                 } else {
                     updateFeedback("Snapshot failed: \(error.localizedDescription)")
                 }
                 eventTracker.track(
                     .captureFailed,
                     parameters: [
-                        "stage": "workflow",
+                        "stage": "capture",
                         "error": analyticsErrorCode(error)
                     ]
                 )
-                AppLogger.error("Capture failed: \(error.localizedDescription)")
+                AppLogger.error("Capture snapshot failed source=\(request.source) error=\(error.localizedDescription)")
                 await MainActor.run { [weak self] in
                     self?.completeCaptureAndStartNextIfNeeded()
+                }
+            }
+        }
+    }
+
+    private func captureSnapshot() async throws -> (CapturedSnapshot, Data?) {
+        try await withCheckedThrowingContinuation { continuation in
+            captureExecutionQueue.async { [captureService] in
+                do {
+                    continuation.resume(returning: try captureService.capture())
+                } catch {
+                    continuation.resume(throwing: error)
                 }
             }
         }
@@ -486,7 +502,7 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
             return
         }
         AppLogger.info(
-            "Starting queued capture source=\(nextRequest.source) remainingQueue=\(remainingQueued) capturedSnapshot=\(nextRequest.capturedSnapshot.id.uuidString)"
+            "Starting queued capture source=\(nextRequest.source) remainingQueue=\(remainingQueued)"
         )
         startCaptureProcessing(nextRequest)
     }
