@@ -12,5 +12,7 @@
     <integer>3</integer>
     <key>appleContextTitleRefreshEvery</key>
     <integer>1</integer>
+    <key>forcedProviderFailureChance</key>
+    <real>0</real>
 </dict>
 </plist>

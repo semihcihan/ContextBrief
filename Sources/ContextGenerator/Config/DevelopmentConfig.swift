@@ -21,6 +21,7 @@ public struct DevelopmentConfig {
     public let enableAppleFoundationForDensification: Bool
     public let thirdPartyContextTitleRefreshEvery: Int
     public let appleContextTitleRefreshEvery: Int
+    public let forcedProviderFailureChance: Double
 
     public init(
         enableLocalDebugProvider: Bool? = nil,
@@ -28,6 +29,7 @@ public struct DevelopmentConfig {
         enableAppleFoundationForDensification: Bool? = nil,
         thirdPartyContextTitleRefreshEvery: Int? = nil,
         appleContextTitleRefreshEvery: Int? = nil,
+        forcedProviderFailureChance: Double? = nil,
         plistURL: URL? = nil,
         appleFoundationAvailableOverride: Bool? = nil
     ) {
@@ -54,6 +56,17 @@ public struct DevelopmentConfig {
                 ?? fileOverrides.appleContextTitleRefreshEvery
                 ?? 6
         )
+        self.forcedProviderFailureChance = Self.isDebugBuild
+            ? min(
+                1,
+                max(
+                    0,
+                    forcedProviderFailureChance
+                        ?? fileOverrides.forcedProviderFailureChance
+                        ?? 0
+                )
+            )
+            : 0
     }
 
     public var appleFoundationAvailable: Bool {
@@ -131,13 +144,15 @@ private struct FileOverrides {
     let enableAppleFoundationForDensification: Bool?
     let thirdPartyContextTitleRefreshEvery: Int?
     let appleContextTitleRefreshEvery: Int?
+    let forcedProviderFailureChance: Double?
 
     static let empty = FileOverrides(
         enableLocalDebugProvider: nil,
         enableAppleFoundationForTitleGeneration: nil,
         enableAppleFoundationForDensification: nil,
         thirdPartyContextTitleRefreshEvery: nil,
-        appleContextTitleRefreshEvery: nil
+        appleContextTitleRefreshEvery: nil,
+        forcedProviderFailureChance: nil
     )
 
     init(
@@ -145,13 +160,15 @@ private struct FileOverrides {
         enableAppleFoundationForTitleGeneration: Bool?,
         enableAppleFoundationForDensification: Bool?,
         thirdPartyContextTitleRefreshEvery: Int?,
-        appleContextTitleRefreshEvery: Int?
+        appleContextTitleRefreshEvery: Int?,
+        forcedProviderFailureChance: Double?
     ) {
         self.enableLocalDebugProvider = enableLocalDebugProvider
         self.enableAppleFoundationForTitleGeneration = enableAppleFoundationForTitleGeneration
         self.enableAppleFoundationForDensification = enableAppleFoundationForDensification
         self.thirdPartyContextTitleRefreshEvery = thirdPartyContextTitleRefreshEvery
         self.appleContextTitleRefreshEvery = appleContextTitleRefreshEvery
+        self.forcedProviderFailureChance = forcedProviderFailureChance
     }
 
     init(dictionary: [String: Any]) {
@@ -160,6 +177,7 @@ private struct FileOverrides {
         enableAppleFoundationForDensification = dictionary["enableAppleFoundationForDensification"] as? Bool
         thirdPartyContextTitleRefreshEvery = dictionary["thirdPartyContextTitleRefreshEvery"] as? Int
         appleContextTitleRefreshEvery = dictionary["appleContextTitleRefreshEvery"] as? Int
+        forcedProviderFailureChance = (dictionary["forcedProviderFailureChance"] as? NSNumber)?.doubleValue
     }
 }
 

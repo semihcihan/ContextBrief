@@ -14,6 +14,7 @@ final class DevelopmentConfigTests: XCTestCase {
         XCTAssertFalse(config.enableAppleFoundationForDensification)
         XCTAssertEqual(config.thirdPartyContextTitleRefreshEvery, 3)
         XCTAssertEqual(config.appleContextTitleRefreshEvery, 6)
+        XCTAssertEqual(config.forcedProviderFailureChance, 0)
         XCTAssertFalse(config.appleFoundationProviderEnabled)
     }
 
@@ -23,7 +24,8 @@ final class DevelopmentConfigTests: XCTestCase {
             "enableAppleFoundationForTitleGeneration": true,
             "enableAppleFoundationForDensification": false,
             "thirdPartyContextTitleRefreshEvery": 5,
-            "appleContextTitleRefreshEvery": 2
+            "appleContextTitleRefreshEvery": 2,
+            "forcedProviderFailureChance": 0.4
         ])
         let config = DevelopmentConfig(plistURL: plistURL, appleFoundationAvailableOverride: true)
 
@@ -32,6 +34,11 @@ final class DevelopmentConfigTests: XCTestCase {
         XCTAssertFalse(config.enableAppleFoundationForDensification)
         XCTAssertEqual(config.thirdPartyContextTitleRefreshEvery, 5)
         XCTAssertEqual(config.appleContextTitleRefreshEvery, 2)
+#if DEBUG
+        XCTAssertEqual(config.forcedProviderFailureChance, 0.4, accuracy: 0.0001)
+#else
+        XCTAssertEqual(config.forcedProviderFailureChance, 0)
+#endif
     }
 
     func testRoutingUsesAvailabilityAndFeatureFlags() {
@@ -64,6 +71,19 @@ final class DevelopmentConfigTests: XCTestCase {
         )
         XCTAssertEqual(config.thirdPartyContextTitleRefreshEvery, 1)
         XCTAssertEqual(config.appleContextTitleRefreshEvery, 1)
+    }
+
+    func testForcedProviderFailureChanceIsClamped() {
+        let lowChance = DevelopmentConfig(forcedProviderFailureChance: -0.4)
+        let highChance = DevelopmentConfig(forcedProviderFailureChance: 1.4)
+
+#if DEBUG
+        XCTAssertEqual(lowChance.forcedProviderFailureChance, 0)
+        XCTAssertEqual(highChance.forcedProviderFailureChance, 1)
+#else
+        XCTAssertEqual(lowChance.forcedProviderFailureChance, 0)
+        XCTAssertEqual(highChance.forcedProviderFailureChance, 0)
+#endif
     }
 
     func testLocalDebugFlagCanDisableCredentialRequirements() {
