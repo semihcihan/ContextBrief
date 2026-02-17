@@ -108,13 +108,22 @@ public final class CaptureWorkflow {
                     model: model,
                     apiKey: apiKey
                 )
+                AppLogger.debug(
+                    "Densification succeeded [provider=\(provider.rawValue) retriesPerformed=\(retriesPerformed) snapshot=\(snapshot.id.uuidString)]"
+                )
                 return .success(content: dense, retriesPerformed: retriesPerformed)
             } catch {
                 if attempt < maxDensificationAttempts, shouldRetryDensification(after: error) {
                     retriesPerformed += 1
+                    AppLogger.error(
+                        "Densification failed, retrying [provider=\(provider.rawValue) attempt=\(attempt) nextAttempt=\(attempt + 1) maxAttempts=\(maxDensificationAttempts) snapshot=\(snapshot.id.uuidString) error=\(errorMessage(from: error))]"
+                    )
                     try? await Task.sleep(nanoseconds: densificationRetryDelayNanoseconds)
                     continue
                 }
+                AppLogger.error(
+                    "Densification failed without recovery [provider=\(provider.rawValue) attempt=\(attempt) maxAttempts=\(maxDensificationAttempts) snapshot=\(snapshot.id.uuidString) error=\(errorMessage(from: error))]"
+                )
                 return .failed(
                     message: errorMessage(from: error),
                     retriesPerformed: retriesPerformed

@@ -21,6 +21,9 @@ public final class SnapshotRetryWorkflow {
             throw AppError.snapshotNotFound
         }
         guard snapshot.status == .failed else {
+            AppLogger.debug(
+                "Skipped retry because snapshot is not failed [snapshot=\(snapshot.id.uuidString) status=\(snapshot.status.rawValue)]"
+            )
             return snapshot
         }
         guard
@@ -40,6 +43,9 @@ public final class SnapshotRetryWorkflow {
 
         let nextRetryCount = snapshot.retryCount + 1
         let attemptedAt = Date()
+        AppLogger.debug(
+            "Retrying failed snapshot [snapshot=\(snapshot.id.uuidString) retryCount=\(nextRetryCount) provider=\(provider.rawValue)]"
+        )
         let capturedSnapshot = CapturedSnapshot(
             id: snapshot.id,
             capturedAt: snapshot.createdAt,
@@ -74,6 +80,9 @@ public final class SnapshotRetryWorkflow {
                 lastAttemptAt: attemptedAt
             )
             try repository.updateSnapshot(updated)
+            AppLogger.debug(
+                "Retry succeeded for snapshot [snapshot=\(snapshot.id.uuidString) retryCount=\(nextRetryCount) provider=\(provider.rawValue)]"
+            )
             return updated
         } catch {
             let updated = makeUpdatedSnapshot(
@@ -85,6 +94,9 @@ public final class SnapshotRetryWorkflow {
                 lastAttemptAt: attemptedAt
             )
             try repository.updateSnapshot(updated)
+            AppLogger.error(
+                "Retry failed for snapshot [snapshot=\(snapshot.id.uuidString) retryCount=\(nextRetryCount) provider=\(provider.rawValue) error=\(errorMessage(from: error))]"
+            )
             throw error
         }
     }
