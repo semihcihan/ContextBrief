@@ -11,6 +11,7 @@ public enum AppError: LocalizedError {
     case keyNotConfigured
     case providerNotConfigured
     case providerRequestFailed(String)
+    case densificationInputTooLong(estimatedTokens: Int, limit: Int)
 
     public var errorDescription: String? {
         switch self {
@@ -34,6 +35,8 @@ public enum AppError: LocalizedError {
             return "Provider is not configured. Complete onboarding."
         case .providerRequestFailed(let details):
             return details
+        case .densificationInputTooLong(let estimated, let limit):
+            return "Capture is too long to densify (about \(estimated) tokens; limit is \(limit)). Try a shorter selection or fewer pages."
         }
     }
 }
