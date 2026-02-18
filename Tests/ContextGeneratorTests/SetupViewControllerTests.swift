@@ -38,9 +38,14 @@ final class SetupViewControllerTests: XCTestCase {
         )
         controller.loadViewIfNeeded()
 
-        XCTAssertTrue(controller.testingProviderTitles().contains("Apple Foundation"))
+        XCTAssertTrue(controller.testingProviderTitles().contains("Apple"))
         XCTAssertEqual(controller.testingSelectedProvider(), .apple)
-        XCTAssertEqual(controller.testingInfoLabelValue(), "Apple Foundation selected. Model and API key are not required.")
+        XCTAssertEqual(controller.testingInfoLabelValue(), "Apple selected. Model and API key are not required.")
+        XCTAssertTrue(controller.testingAppleProviderWarningVisible())
+        XCTAssertEqual(
+            controller.testingAppleProviderWarningValue(),
+            "Apple's on-device LLM may respond more slowly. Snapshot processing can take longer."
+        )
         XCTAssertFalse(controller.testingModelRowVisible())
         XCTAssertFalse(controller.testingAPIKeyRowVisible())
     }
@@ -57,10 +62,26 @@ final class SetupViewControllerTests: XCTestCase {
         controller.loadViewIfNeeded()
         controller.testingSelectProvider(.apple)
 
+        XCTAssertTrue(controller.testingAppleProviderWarningVisible())
         XCTAssertFalse(controller.testingModelRowVisible())
         XCTAssertFalse(controller.testingAPIKeyRowVisible())
         XCTAssertFalse(controller.testingModelFieldEnabled())
         XCTAssertFalse(controller.testingKeyFieldEnabled())
+    }
+
+    func testSelectingCredentialProviderHidesAppleWarning() throws {
+        let (appStateService, _) = try makeAppStateService()
+        let controller = makeController(
+            appStateService: appStateService,
+            developmentConfig: DevelopmentConfig(
+                enableLocalDebugProvider: false,
+                appleFoundationAvailableOverride: true
+            )
+        )
+        controller.loadViewIfNeeded()
+        controller.testingSelectProvider(.openai)
+
+        XCTAssertFalse(controller.testingAppleProviderWarningVisible())
     }
 
     func testDefaultModelValueIsGpt5Nano() throws {

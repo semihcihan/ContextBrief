@@ -27,12 +27,16 @@ public final class NamingService {
             denseContent
         ].joined(separator: "\n")
 
+        let startedAt = Date()
         let raw = await requestText(
             provider: provider,
             model: model,
             apiKey: apiKey,
             systemInstruction: "You generate concise names for saved work context.",
             prompt: prompt
+        )
+        AppLogger.debug(
+            "Title generation completed [kind=snapshot provider=\(provider.rawValue) runs=1 seconds=\(formattedElapsedSeconds(since: startedAt))]"
         )
         return normalizedTitle(raw, fallback: fallback)
     }
@@ -55,12 +59,16 @@ public final class NamingService {
             joined
         ].joined(separator: "\n")
 
+        let startedAt = Date()
         let raw = await requestText(
             provider: provider,
             model: model,
             apiKey: apiKey,
             systemInstruction: "You generate concise names for saved work context.",
             prompt: prompt
+        )
+        AppLogger.debug(
+            "Title generation completed [kind=context provider=\(provider.rawValue) runs=1 seconds=\(formattedElapsedSeconds(since: startedAt))]"
         )
         return normalizedTitle(raw, fallback: fallback)
     }
@@ -100,4 +108,8 @@ public final class NamingService {
             return nil
         }
     }
+}
+
+private func formattedElapsedSeconds(since startDate: Date) -> String {
+    String(format: "%.2f", Date().timeIntervalSince(startDate))
 }

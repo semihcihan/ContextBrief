@@ -61,7 +61,7 @@ final class ShortcutSettingsViewController: NSViewController {
         stack.addArrangedSubview(makeDivider())
         stack.addArrangedSubview(makeActionGroup(
             title: "Copy Current Context",
-            detail: "Copies the dense export of your current context to clipboard.",
+            detail: "Copies the dense export of your current context to clipboard and pastes it.",
             recorder: copyCurrentRecorder
         ))
 
