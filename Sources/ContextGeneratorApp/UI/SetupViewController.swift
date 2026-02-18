@@ -97,9 +97,25 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
         modelField.delegate = self
         modelField.target = self
         modelField.action = #selector(inputFieldsChanged)
+        modelField.maximumNumberOfLines = 1
+        modelField.lineBreakMode = .byTruncatingTail
+        if let modelCell = modelField.cell as? NSTextFieldCell {
+            modelCell.wraps = false
+            modelCell.isScrollable = true
+            modelCell.usesSingleLineMode = true
+            modelCell.lineBreakMode = .byTruncatingTail
+        }
         keyField.delegate = self
         keyField.target = self
         keyField.action = #selector(inputFieldsChanged)
+        keyField.maximumNumberOfLines = 1
+        keyField.lineBreakMode = .byTruncatingTail
+        if let keyCell = keyField.cell as? NSTextFieldCell {
+            keyCell.wraps = false
+            keyCell.isScrollable = true
+            keyCell.usesSingleLineMode = true
+            keyCell.lineBreakMode = .byTruncatingTail
+        }
         validationSpinner.style = .spinning
         validationSpinner.controlSize = .small
         validationSpinner.isDisplayedWhenStopped = false
@@ -112,10 +128,22 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
         fieldColumn.translatesAutoresizingMaskIntoConstraints = false
         fieldColumn.addArrangedSubview(labeledRow(label: "Provider", view: providerPopup))
         appleProviderWarningLabel.stringValue = appleProviderWarningMessage
-        appleProviderWarningLabel.textColor = .secondaryLabelColor
-        appleProviderWarningLabel.font = .preferredFont(forTextStyle: .subheadline)
+        appleProviderWarningLabel.textColor = .systemOrange
+        let subheadlineSize = NSFont.preferredFont(forTextStyle: .subheadline).pointSize
+        appleProviderWarningLabel.font = .systemFont(ofSize: subheadlineSize, weight: .medium)
         appleProviderWarningLabel.maximumNumberOfLines = 0
-        let appleProviderWarningRow = warningRow(view: appleProviderWarningLabel)
+        let warningIcon = NSImageView(image: NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: "Warning")!)
+        warningIcon.contentTintColor = .systemOrange
+        warningIcon.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            warningIcon.widthAnchor.constraint(equalToConstant: 18),
+            warningIcon.heightAnchor.constraint(equalToConstant: 18)
+        ])
+        let appleWarningContent = NSStackView(views: [warningIcon, appleProviderWarningLabel])
+        appleWarningContent.orientation = .horizontal
+        appleWarningContent.spacing = 8
+        appleWarningContent.alignment = .top
+        let appleProviderWarningRow = warningRow(view: appleWarningContent)
         self.appleProviderWarningRow = appleProviderWarningRow
         fieldColumn.addArrangedSubview(appleProviderWarningRow)
         let modelRow = labeledRow(label: "Model", view: modelField)
@@ -159,12 +187,15 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
         stack.addArrangedSubview(statusRow)
 
         view.addSubview(stack)
+        let fieldMinWidth: CGFloat = 280
         NSLayoutConstraint.activate([
             stack.topAnchor.constraint(equalTo: view.topAnchor),
             stack.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             stack.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             fieldColumn.widthAnchor.constraint(equalToConstant: 460),
+            modelField.widthAnchor.constraint(greaterThanOrEqualToConstant: fieldMinWidth),
+            keyField.widthAnchor.constraint(equalTo: modelField.widthAnchor),
             buttonColumn.widthAnchor.constraint(equalToConstant: 240),
             requestPermissionsButton.widthAnchor.constraint(equalTo: finishSetupButton.widthAnchor),
             requestPermissionsButton.heightAnchor.constraint(equalToConstant: 30),
@@ -188,6 +219,10 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
         text.alignment = .right
         text.translatesAutoresizingMaskIntoConstraints = false
         view.translatesAutoresizingMaskIntoConstraints = false
+        text.setContentHuggingPriority(.required, for: .horizontal)
+        text.setContentCompressionResistancePriority(.required, for: .horizontal)
+        view.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         row.addArrangedSubview(text)
         row.addArrangedSubview(view)
         NSLayoutConstraint.activate([
