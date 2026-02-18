@@ -67,15 +67,83 @@ private extension ProviderClient {
 
 public enum ProviderClientFactory {
     public static func make(provider: ProviderName, session: URLSession = .shared) -> ProviderClient {
+        let client: ProviderClient
         switch provider {
         case .openai:
-            return OpenAIProviderClient(session: session)
+            client = OpenAIProviderClient(session: session)
         case .anthropic:
-            return AnthropicProviderClient(session: session)
+            client = AnthropicProviderClient(session: session)
         case .gemini:
-            return GeminiProviderClient(session: session)
+            client = GeminiProviderClient(session: session)
         case .apple:
-            return AppleFoundationProviderClient()
+            client = AppleFoundationProviderClient()
+        }
+        if provider.serializeProviderCalls {
+            return SerializedProviderClient(provider: provider, wrapped: client)
+        }
+        return client
+    }
+}
+
+actor ProviderCallSerializer {
+    static let shared = ProviderCallSerializer()
+    private var activeProviders: Set<String> = []
+    private var waitersByProvider: [String: [CheckedContinuation<Void, Never>]] = [:]
+
+    func acquire(provider: ProviderName) async {
+        let key = provider.rawValue
+        if !activeProviders.contains(key) {
+            activeProviders.insert(key)
+            return
+        }
+        await withCheckedContinuation { continuation in
+            waitersByProvider[key, default: []].append(continuation)
+        }
+    }
+
+    func release(provider: ProviderName) {
+        let key = provider.rawValue
+        guard var waiters = waitersByProvider[key], !waiters.isEmpty else {
+            activeProviders.remove(key)
+            waitersByProvider[key] = nil
+            return
+        }
+        let next = waiters.removeFirst()
+        if waiters.isEmpty {
+            waitersByProvider[key] = nil
+        } else {
+            waitersByProvider[key] = waiters
+        }
+        next.resume()
+    }
+}
+
+struct SerializedProviderClient: ProviderClient {
+    let provider: ProviderName
+    let wrapped: ProviderClient
+
+    func requestText(request: ProviderTextRequest, apiKey: String, model: String) async throws -> String {
+        try await runSerialized {
+            try await wrapped.requestText(request: request, apiKey: apiKey, model: model)
+        }
+    }
+
+    func densify(request: DensificationRequest, apiKey: String, model: String) async throws -> String {
+        try await runSerialized {
+            try await wrapped.densify(request: request, apiKey: apiKey, model: model)
+        }
+    }
+
+    private func runSerialized<T>(_ operation: () async throws -> T) async throws -> T {
+        let serializer = ProviderCallSerializer.shared
+        await serializer.acquire(provider: provider)
+        do {
+            let result = try await operation()
+            await serializer.release(provider: provider)
+            return result
+        } catch {
+            await serializer.release(provider: provider)
+            throw error
         }
     }
 }
