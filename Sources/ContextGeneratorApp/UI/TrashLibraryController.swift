@@ -69,13 +69,20 @@ final class TrashLibraryController: NSViewController, NSTableViewDataSource, NST
     private func setupUI() {
         let splitView = NSSplitView()
         splitView.isVertical = true
-        splitView.dividerStyle = .thin
         splitView.translatesAutoresizingMaskIntoConstraints = false
 
         let leftPane = NSView()
         let rightPane = NSView()
+        let detailContainer = NSVisualEffectView()
         leftPane.translatesAutoresizingMaskIntoConstraints = false
         rightPane.translatesAutoresizingMaskIntoConstraints = false
+        detailContainer.material = .underWindowBackground
+        detailContainer.blendingMode = .withinWindow
+        detailContainer.state = .active
+        detailContainer.wantsLayer = true
+        detailContainer.layer?.cornerRadius = 12
+        detailContainer.layer?.masksToBounds = true
+        detailContainer.translatesAutoresizingMaskIntoConstraints = false
         splitView.addSubview(leftPane)
         splitView.addSubview(rightPane)
 
@@ -85,6 +92,10 @@ final class TrashLibraryController: NSViewController, NSTableViewDataSource, NST
         tableView.usesAlternatingRowBackgroundColors = false
         tableView.dataSource = self
         tableView.delegate = self
+        tableView.rowHeight = max(
+            tableView.rowHeight,
+            NSFont.preferredFont(forTextStyle: .headline).pointSize + 8
+        )
         rowMenu.delegate = self
         rowMenu.autoenablesItems = false
         tableView.menu = rowMenu
@@ -94,20 +105,25 @@ final class TrashLibraryController: NSViewController, NSTableViewDataSource, NST
         tableScrollView.translatesAutoresizingMaskIntoConstraints = false
 
         detailTextView.isEditable = false
-        detailTextView.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        detailTextView.textColor = .labelColor
+        detailTextView.font = NSFont.preferredFont(forTextStyle: .body)
         detailTextView.isVerticallyResizable = true
         detailTextView.isHorizontallyResizable = false
         detailTextView.autoresizingMask = [.width]
         detailTextView.textContainerInset = NSSize(width: 12, height: 12)
         detailTextView.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
         detailTextView.textContainer?.widthTracksTextView = true
+        detailTextView.drawsBackground = false
+        detailTextView.backgroundColor = .clear
         detailScrollView.documentView = detailTextView
         detailScrollView.hasVerticalScroller = true
+        detailScrollView.drawsBackground = false
         detailScrollView.translatesAutoresizingMaskIntoConstraints = false
 
         view.addSubview(splitView)
         leftPane.addSubview(tableScrollView)
-        rightPane.addSubview(detailScrollView)
+        rightPane.addSubview(detailContainer)
+        detailContainer.addSubview(detailScrollView)
 
         NSLayoutConstraint.activate([
             splitView.topAnchor.constraint(equalTo: view.topAnchor, constant: 12),
@@ -115,17 +131,22 @@ final class TrashLibraryController: NSViewController, NSTableViewDataSource, NST
             splitView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -12),
             splitView.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -12),
 
-            leftPane.widthAnchor.constraint(equalToConstant: 380),
+            leftPane.widthAnchor.constraint(equalToConstant: 320),
 
             tableScrollView.topAnchor.constraint(equalTo: leftPane.topAnchor),
             tableScrollView.leadingAnchor.constraint(equalTo: leftPane.leadingAnchor),
             tableScrollView.trailingAnchor.constraint(equalTo: leftPane.trailingAnchor),
             tableScrollView.bottomAnchor.constraint(equalTo: leftPane.bottomAnchor),
 
-            detailScrollView.topAnchor.constraint(equalTo: rightPane.topAnchor),
-            detailScrollView.leadingAnchor.constraint(equalTo: rightPane.leadingAnchor),
-            detailScrollView.trailingAnchor.constraint(equalTo: rightPane.trailingAnchor),
-            detailScrollView.bottomAnchor.constraint(equalTo: rightPane.bottomAnchor)
+            detailContainer.topAnchor.constraint(equalTo: rightPane.topAnchor),
+            detailContainer.leadingAnchor.constraint(equalTo: rightPane.leadingAnchor),
+            detailContainer.trailingAnchor.constraint(equalTo: rightPane.trailingAnchor),
+            detailContainer.bottomAnchor.constraint(equalTo: rightPane.bottomAnchor),
+
+            detailScrollView.topAnchor.constraint(equalTo: detailContainer.topAnchor),
+            detailScrollView.leadingAnchor.constraint(equalTo: detailContainer.leadingAnchor),
+            detailScrollView.trailingAnchor.constraint(equalTo: detailContainer.trailingAnchor),
+            detailScrollView.bottomAnchor.constraint(equalTo: detailContainer.bottomAnchor)
         ])
     }
 
@@ -150,13 +171,15 @@ final class TrashLibraryController: NSViewController, NSTableViewDataSource, NST
             let title = NSTextField(labelWithString: "")
             title.identifier = NSUserInterfaceItemIdentifier("title")
             title.lineBreakMode = .byTruncatingTail
+            title.font = NSFont.preferredFont(forTextStyle: .headline)
+            title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
             stack.addArrangedSubview(badge)
             stack.addArrangedSubview(title)
             created.addSubview(stack)
             NSLayoutConstraint.activate([
                 stack.leadingAnchor.constraint(equalTo: created.leadingAnchor, constant: 6),
-                stack.trailingAnchor.constraint(equalTo: created.trailingAnchor, constant: -6),
+                stack.trailingAnchor.constraint(lessThanOrEqualTo: created.trailingAnchor, constant: -6),
                 stack.centerYAnchor.constraint(equalTo: created.centerYAnchor)
             ])
             return created
@@ -170,9 +193,12 @@ final class TrashLibraryController: NSViewController, NSTableViewDataSource, NST
         case .context(let context):
             badge?.stringValue = "Context"
             title?.stringValue = context.context.title
+            title?.font = NSFont.preferredFont(forTextStyle: .headline)
         case .snapshot(let snapshot):
             badge?.stringValue = "Snapshot"
             title?.stringValue = "\(snapshot.snapshot.title) - \(snapshot.sourceContextTitle)"
+            let baseSnapshotTitleFont = NSFont.preferredFont(forTextStyle: .subheadline)
+            title?.font = NSFont.systemFont(ofSize: baseSnapshotTitleFont.pointSize + 1, weight: .regular)
         }
         return cell
     }
@@ -182,6 +208,9 @@ final class TrashLibraryController: NSViewController, NSTableViewDataSource, NST
     }
 
     private func showSelectedDetails() {
+        let titleFont = NSFont.preferredFont(forTextStyle: .title2)
+        let bodyFont = NSFont.preferredFont(forTextStyle: .body)
+        let sectionTitleFont = NSFont.systemFont(ofSize: bodyFont.pointSize, weight: .semibold)
         let selectedRow = tableView.selectedRow
         guard selectedRow >= 0, selectedRow < items.count else {
             detailTextView.string = items.isEmpty ? "Trash is empty." : "Select an item."
@@ -189,27 +218,93 @@ final class TrashLibraryController: NSViewController, NSTableViewDataSource, NST
         }
         switch items[selectedRow] {
         case .context(let context):
-            detailTextView.string = [
-                "Trashed Context: \(context.context.title)",
-                "Snapshots: \(context.snapshots.count)",
-                "",
-                "Created: \(context.context.createdAt.formatted())",
-                "Deleted: \(context.deletedAt.formatted())"
-            ].joined(separator: "\n")
+            let details = NSMutableAttributedString(
+                string: "\(context.context.title)\n",
+                attributes: [
+                    .font: titleFont,
+                    .foregroundColor: NSColor.labelColor
+                ]
+            )
+            details.append(
+                NSAttributedString(
+                    string: "Type: Context\nSnapshots: \(context.snapshots.count)\nCreated: \(context.context.createdAt.formatted())\nDeleted: \(context.deletedAt.formatted())",
+                    attributes: [
+                        .font: bodyFont,
+                        .foregroundColor: NSColor.labelColor
+                    ]
+                )
+            )
+            applyDetailsText(details)
         case .snapshot(let item):
             let snapshot = item.snapshot
-            detailTextView.string = [
-                "Trashed Snapshot: \(snapshot.title)",
-                "From Context: \(item.sourceContextTitle)",
-                "App: \(snapshot.appName)",
-                "Window: \(snapshot.windowTitle)",
-                "",
-                "Dense Content",
-                snapshot.denseContent,
-                "",
-                "Raw Content",
-                snapshot.rawContent
-            ].joined(separator: "\n")
+            let details = NSMutableAttributedString(
+                string: "\(snapshot.title)\n",
+                attributes: [
+                    .font: titleFont,
+                    .foregroundColor: NSColor.labelColor
+                ]
+            )
+            details.append(
+                NSAttributedString(
+                    string: "Type: Snapshot\nFrom Context: \(item.sourceContextTitle)\nApp: \(snapshot.appName)\nWindow: \(snapshot.windowTitle)\nDeleted: \(item.deletedAt.formatted())",
+                    attributes: [
+                        .font: bodyFont,
+                        .foregroundColor: NSColor.labelColor
+                    ]
+                )
+            )
+            if !snapshot.denseContent.isEmpty {
+                details.append(
+                    NSAttributedString(
+                        string: "\n\nDense Content",
+                        attributes: [
+                            .font: sectionTitleFont,
+                            .foregroundColor: NSColor.labelColor
+                        ]
+                    )
+                )
+                details.append(
+                    NSAttributedString(
+                        string: "\n\(snapshot.denseContent)",
+                        attributes: [
+                            .font: bodyFont,
+                            .foregroundColor: NSColor.labelColor
+                        ]
+                    )
+                )
+            }
+            if !snapshot.rawContent.isEmpty {
+                details.append(
+                    NSAttributedString(
+                        string: "\n\nRaw Content",
+                        attributes: [
+                            .font: sectionTitleFont,
+                            .foregroundColor: NSColor.labelColor
+                        ]
+                    )
+                )
+                details.append(
+                    NSAttributedString(
+                        string: "\n\(snapshot.rawContent)",
+                        attributes: [
+                            .font: bodyFont,
+                            .foregroundColor: NSColor.labelColor
+                        ]
+                    )
+                )
+            }
+            if snapshot.denseContent.isEmpty, snapshot.rawContent.isEmpty {
+                details.append(
+                    NSAttributedString(
+                        string: "\n\nNo content available.",
+                        attributes: [
+                            .font: bodyFont,
+                            .foregroundColor: NSColor.secondaryLabelColor
+                        ]
+                    )
+                )
+            }
+            applyDetailsText(details)
         }
     }
 
@@ -326,7 +421,8 @@ final class TrashLibraryController: NSViewController, NSTableViewDataSource, NST
 
     private func makeBadgeLabel(text: String) -> NSTextField {
         let label = NSTextField(labelWithString: text)
-        label.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        let badgeFont = NSFont.preferredFont(forTextStyle: .subheadline)
+        label.font = NSFont.systemFont(ofSize: badgeFont.pointSize, weight: .semibold)
         label.textColor = NSColor.secondaryLabelColor
         label.wantsLayer = true
         label.layer?.cornerRadius = 8
@@ -334,9 +430,19 @@ final class TrashLibraryController: NSViewController, NSTableViewDataSource, NST
         label.layer?.backgroundColor = NSColor.quaternaryLabelColor.cgColor
         label.alignment = .center
         label.cell?.usesSingleLineMode = true
+        label.setContentHuggingPriority(.required, for: .horizontal)
+        label.setContentCompressionResistancePriority(.required, for: .horizontal)
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.heightAnchor.constraint(equalToConstant: 16).isActive = true
+        label.heightAnchor.constraint(greaterThanOrEqualToConstant: ceil(badgeFont.pointSize + 6)).isActive = true
         label.widthAnchor.constraint(greaterThanOrEqualToConstant: 56).isActive = true
         return label
+    }
+
+    private func applyDetailsText(_ details: NSAttributedString) {
+        if let textStorage = detailTextView.textStorage {
+            textStorage.setAttributedString(details)
+            return
+        }
+        detailTextView.string = details.string
     }
 }

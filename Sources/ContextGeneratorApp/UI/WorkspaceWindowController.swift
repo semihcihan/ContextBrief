@@ -92,13 +92,13 @@ final class WorkspaceWindowController: NSWindowController {
         splitController.splitViewItems[0].canCollapse = false
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 980, height: 620),
+            contentRect: NSRect(x: 0, y: 0, width: 1100, height: 620),
             styleMask: [.titled, .closable, .resizable, .miniaturizable],
             backing: .buffered,
             defer: false
         )
         window.title = "Context Brief"
-        window.minSize = NSSize(width: 840, height: 520)
+        window.minSize = NSSize(width: 920, height: 520)
         window.contentViewController = splitController
         window.toolbarStyle = .unified
         super.init(window: window)
