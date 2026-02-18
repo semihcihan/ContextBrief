@@ -40,14 +40,29 @@ public extension ProviderClient {
             try await Task.sleep(nanoseconds: localDebugResponseDelayNanoseconds)
             return localDebugPrefixText(request.inputText, maxCharacters: localDebugDensificationCharacterLimit)
         }
-        return try await requestText(
-            request: ProviderTextRequest(
-                systemInstruction: densificationSystemInstruction,
-                prompt: densificationPrompt(for: request)
-            ),
-            apiKey: apiKey,
-            model: model
-        )
+        do {
+            return try await requestText(
+                request: ProviderTextRequest(
+                    systemInstruction: densificationSystemInstruction,
+                    prompt: densificationPrompt(for: request)
+                ),
+                apiKey: apiKey,
+                model: model
+            )
+        } catch {
+            guard isContextWindowExceededError(error) else {
+                throw error
+            }
+            AppLogger.debug(
+                "Densification exceeded \(provider.rawValue) context window. Retrying with chunking fallback."
+            )
+            return try await densifyWithAdaptiveChunking(
+                request: request,
+                apiKey: apiKey,
+                model: model,
+                initialChunkInputTokens: reactiveContextWindowInitialChunkInputTokens
+            )
+        }
     }
 }
 
@@ -62,6 +77,111 @@ private extension ProviderClient {
             try await Task.sleep(nanoseconds: localDebugResponseDelayNanoseconds)
             throw AppError.providerRequestFailed("Forced provider failure for debugging.")
         }
+    }
+
+    func densifyWithAdaptiveChunking(
+        request: DensificationRequest,
+        apiKey: String,
+        model: String,
+        initialChunkInputTokens: Int
+    ) async throws -> String {
+        var chunkInputTokens = max(densificationMinimumChunkInputTokens, initialChunkInputTokens)
+        while true {
+            do {
+                return try await densifyInChunks(
+                    request: request,
+                    apiKey: apiKey,
+                    model: model,
+                    chunkInputTokens: chunkInputTokens
+                )
+            } catch {
+                guard isContextWindowExceededError(error), chunkInputTokens > densificationMinimumChunkInputTokens else {
+                    throw error
+                }
+                let nextChunkInputTokens = max(densificationMinimumChunkInputTokens, chunkInputTokens / 2)
+                guard nextChunkInputTokens < chunkInputTokens else {
+                    throw error
+                }
+                AppLogger.debug(
+                    "Densification exceeded context window. Retrying with smaller chunk budget [provider=\(provider.rawValue) previous=\(chunkInputTokens) next=\(nextChunkInputTokens)]"
+                )
+                chunkInputTokens = nextChunkInputTokens
+            }
+        }
+    }
+
+    func densifyInChunks(
+        request: DensificationRequest,
+        apiKey: String,
+        model: String,
+        chunkInputTokens: Int
+    ) async throws -> String {
+        let planner = AppleFoundationContextWindowPlanner(
+            maxChunkInputTokens: chunkInputTokens,
+            maxMergeInputTokens: max(
+                densificationMinimumChunkInputTokens,
+                min(chunkInputTokens, densificationDefaultMergeInputTokens)
+            ),
+            minimumChunkInputTokens: densificationMinimumChunkInputTokens
+        )
+        let chunks = planner.chunkInput(request.inputText)
+        guard !chunks.isEmpty else {
+            return ""
+        }
+
+        var partials: [String] = []
+        partials.reserveCapacity(chunks.count)
+        for (index, chunk) in chunks.enumerated() {
+            partials.append(
+                try await requestText(
+                    request: ProviderTextRequest(
+                        systemInstruction: densificationSystemInstruction,
+                        prompt: densificationChunkPrompt(
+                            inputText: chunk,
+                            appName: request.appName,
+                            windowTitle: request.windowTitle,
+                            chunkIndex: index + 1,
+                            totalChunks: chunks.count
+                        )
+                    ),
+                    apiKey: apiKey,
+                    model: model
+                )
+            )
+        }
+
+        var mergedPartials = partials
+        var pass = 1
+        while mergedPartials.count > 1 {
+            let mergeGroups = planner.mergeGroups(for: mergedPartials)
+            if mergeGroups.count == mergedPartials.count, mergeGroups.allSatisfy({ $0.count == 1 }) {
+                return mergedPartials.joined(separator: "\n\n")
+            }
+
+            var reducedPartials: [String] = []
+            reducedPartials.reserveCapacity(mergeGroups.count)
+            for group in mergeGroups {
+                reducedPartials.append(
+                    try await requestText(
+                        request: ProviderTextRequest(
+                            systemInstruction: densificationSystemInstruction,
+                            prompt: densificationMergePrompt(
+                                partials: group,
+                                appName: request.appName,
+                                windowTitle: request.windowTitle,
+                                pass: pass
+                            )
+                        ),
+                        apiKey: apiKey,
+                        model: model
+                    )
+                )
+            }
+            mergedPartials = reducedPartials
+            pass += 1
+        }
+
+        return mergedPartials.first ?? ""
     }
 }
 
@@ -152,10 +272,12 @@ private let providerRequestTimeoutSeconds: TimeInterval = 30
 private let localDebugResponseDelayNanoseconds: UInt64 = 3_000_000_000
 private let localDebugDensificationCharacterLimit = 200
 private let densificationSystemInstruction = "You produce concise, complete context with no missing key information."
-private let appleInitialChunkInputTokens = 1800
-private let appleMinimumChunkInputTokens = 320
-private let appleChunkTargetWordLimit = 180
-private let appleMergeTargetWordLimit = 260
+private let appleProactiveInitialChunkInputTokens = 1800
+private let densificationMinimumChunkInputTokens = 320
+private let reactiveContextWindowInitialChunkInputTokens = 12_000
+private let densificationDefaultMergeInputTokens = 2_000
+private let densificationChunkTargetWordLimit = 180
+private let densificationMergeTargetWordLimit = 260
 private let appleContextWindowExceededMessage = "Context Window Size Exceeded. Apple Foundation Models allow up to 4,096 tokens per session (including instructions, input, and output). Start a new session and retry with shorter input or output."
 
 private func providerRequestErrorMessage(from data: Data, fallback: String) -> String {
@@ -192,6 +314,13 @@ private func validatedResponseData(
     guard (200 ... 299).contains(httpResponse.statusCode) else {
         let fallback = "Request to \(providerName) failed with status \(httpResponse.statusCode)."
         let details = providerRequestErrorMessage(from: data, fallback: fallback)
+        if
+            let signal = providerErrorSignal(from: data),
+            isContextWindowExceededSignal(signal),
+            !isContextWindowExceededSignal(details)
+        {
+            throw AppError.providerRequestFailed("Context window exceeded. \(details)")
+        }
         throw AppError.providerRequestFailed(details)
     }
     return data
@@ -235,6 +364,125 @@ private func densificationPrompt(for request: DensificationRequest) -> String {
 
 private func localDebugPrefixText(_ value: String, maxCharacters: Int) -> String {
     String(value.prefix(maxCharacters))
+}
+
+private func providerErrorSignal(from data: Data) -> String? {
+    guard
+        let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    else {
+        return nil
+    }
+
+    var parts: [String] = []
+    func appendField(_ raw: Any?) {
+        guard let raw else {
+            return
+        }
+        let value: String
+        if let stringValue = raw as? String {
+            value = stringValue
+        } else {
+            value = String(describing: raw)
+        }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return
+        }
+        parts.append(trimmed)
+    }
+
+    if let error = json["error"] as? [String: Any] {
+        appendField(error["message"])
+        appendField(error["type"])
+        appendField(error["code"])
+        appendField(error["status"])
+        if let details = error["details"] as? [[String: Any]] {
+            for detail in details {
+                appendField(detail["message"])
+                appendField(detail["reason"])
+                appendField(detail["code"])
+                appendField(detail["status"])
+                appendField(detail["@type"])
+            }
+        }
+    }
+
+    appendField(json["message"])
+    appendField(json["status"])
+    appendField(json["error_description"])
+
+    let signal = parts.joined(separator: " ")
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !signal.isEmpty else {
+        return nil
+    }
+    return signal
+}
+
+private func isContextWindowExceededError(_ error: Error) -> Bool {
+    if let appError = error as? AppError {
+        guard case let .providerRequestFailed(details) = appError else {
+            return false
+        }
+        return isContextWindowExceededSignal(details)
+    }
+    return isRawContextWindowExceededError(error)
+}
+
+private func isRawContextWindowExceededError(_ error: Error) -> Bool {
+    let nsError = error as NSError
+    let signal = [
+        String(describing: error),
+        nsError.domain,
+        nsError.localizedDescription,
+        nsError.userInfo.description
+    ].joined(separator: " ")
+    return isContextWindowExceededSignal(signal)
+}
+
+private func isContextWindowExceededSignal(_ rawSignal: String) -> Bool {
+    let signal = rawSignal.lowercased()
+    guard !signal.isEmpty else {
+        return false
+    }
+    if signal.contains("exceededcontextwindowsize")
+        || signal.contains("context window")
+        || signal.contains("contextwindow")
+        || signal.contains("context_length_exceeded")
+        || signal.contains("maximum context length")
+        || signal.contains("max context length")
+        || signal.contains("prompt is too long")
+        || signal.contains("input token count")
+        || signal.contains("maximum number of tokens allowed")
+    {
+        return true
+    }
+    if signal.contains("rate limit")
+        || signal.contains("tokens per minute")
+        || signal.contains("requests per minute")
+        || signal.contains("input_tokens")
+        || signal.contains("output_tokens")
+        || signal.contains("tpm")
+        || signal.contains("rpm")
+        || signal.contains("quota")
+    {
+        return false
+    }
+    let hasTokenLanguage = signal.contains("token")
+    let hasPromptLanguage = signal.contains("input")
+        || signal.contains("prompt")
+        || signal.contains("message")
+        || signal.contains("messages")
+    let hasWindowLanguage = signal.contains("context")
+        || signal.contains("maximum")
+        || signal.contains("max ")
+        || signal.contains("allowed")
+    let hasExceededLanguage = signal.contains("exceed")
+        || signal.contains("limit")
+        || signal.contains("too long")
+        || signal.contains("too large")
+        || signal.contains("over")
+    return hasTokenLanguage && hasPromptLanguage && hasWindowLanguage && hasExceededLanguage
 }
 
 private struct OpenAIProviderClient: ProviderClient {
@@ -378,29 +626,12 @@ private struct AppleFoundationProviderClient: ProviderClient {
                 )
             }
 
-            var chunkInputTokens = appleInitialChunkInputTokens
-            while true {
-                do {
-                    return try await densifyInChunks(
-                        request: request,
-                        apiKey: apiKey,
-                        model: model,
-                        chunkInputTokens: chunkInputTokens
-                    )
-                } catch {
-                    guard isContextWindowExceededError(error), chunkInputTokens > appleMinimumChunkInputTokens else {
-                        throw error
-                    }
-                    let nextChunkInputTokens = max(appleMinimumChunkInputTokens, chunkInputTokens / 2)
-                    guard nextChunkInputTokens < chunkInputTokens else {
-                        throw error
-                    }
-                    AppLogger.debug(
-                        "Apple densification exceeded context window. Retrying with smaller chunk budget [previous=\(chunkInputTokens) next=\(nextChunkInputTokens)]"
-                    )
-                    chunkInputTokens = nextChunkInputTokens
-                }
-            }
+            return try await densifyWithAdaptiveChunking(
+                request: request,
+                apiKey: apiKey,
+                model: model,
+                initialChunkInputTokens: appleProactiveInitialChunkInputTokens
+            )
         }
 #endif
         throw AppError.providerRequestFailed(
@@ -440,73 +671,6 @@ private struct AppleFoundationProviderClient: ProviderClient {
 #if canImport(FoundationModels)
 @available(macOS 26.0, *)
 private extension AppleFoundationProviderClient {
-    func densifyInChunks(
-        request: DensificationRequest,
-        apiKey: String,
-        model: String,
-        chunkInputTokens: Int
-    ) async throws -> String {
-        let planner = AppleFoundationContextWindowPlanner(maxChunkInputTokens: chunkInputTokens)
-        let chunks = planner.chunkInput(request.inputText)
-        guard !chunks.isEmpty else {
-            return ""
-        }
-
-        var partials: [String] = []
-        partials.reserveCapacity(chunks.count)
-        for (index, chunk) in chunks.enumerated() {
-            partials.append(
-                try await requestText(
-                    request: ProviderTextRequest(
-                        systemInstruction: densificationSystemInstruction,
-                        prompt: densificationChunkPrompt(
-                            inputText: chunk,
-                            appName: request.appName,
-                            windowTitle: request.windowTitle,
-                            chunkIndex: index + 1,
-                            totalChunks: chunks.count
-                        )
-                    ),
-                    apiKey: apiKey,
-                    model: model
-                )
-            )
-        }
-
-        var mergedPartials = partials
-        var pass = 1
-        while mergedPartials.count > 1 {
-            let mergeGroups = planner.mergeGroups(for: mergedPartials)
-            if mergeGroups.count == mergedPartials.count, mergeGroups.allSatisfy({ $0.count == 1 }) {
-                return mergedPartials.joined(separator: "\n\n")
-            }
-
-            var reducedPartials: [String] = []
-            reducedPartials.reserveCapacity(mergeGroups.count)
-            for group in mergeGroups {
-                reducedPartials.append(
-                    try await requestText(
-                        request: ProviderTextRequest(
-                            systemInstruction: densificationSystemInstruction,
-                            prompt: densificationMergePrompt(
-                                partials: group,
-                                appName: request.appName,
-                                windowTitle: request.windowTitle,
-                                pass: pass
-                            )
-                        ),
-                        apiKey: apiKey,
-                        model: model
-                    )
-                )
-            }
-            mergedPartials = reducedPartials
-            pass += 1
-        }
-
-        return mergedPartials.first ?? ""
-    }
-
     func makeLanguageModelSession(systemInstruction: String?) -> LanguageModelSession {
         if
             let instruction = systemInstruction?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -522,29 +686,6 @@ private extension AppleFoundationProviderClient {
             return .providerRequestFailed(appleContextWindowExceededMessage)
         }
         return .providerRequestFailed("Apple Foundation Models request failed: \(error.localizedDescription)")
-    }
-
-    func isContextWindowExceededError(_ error: Error) -> Bool {
-        if let appError = error as? AppError {
-            guard case let .providerRequestFailed(details) = appError else {
-                return false
-            }
-            return details.lowercased().contains("context window")
-        }
-        return isRawContextWindowExceededError(error)
-    }
-
-    func isRawContextWindowExceededError(_ error: Error) -> Bool {
-        let nsError = error as NSError
-        let signal = [
-            String(describing: error),
-            nsError.domain,
-            nsError.localizedDescription,
-            nsError.userInfo.description
-        ].joined(separator: " ").lowercased()
-        return signal.contains("exceededcontextwindowsize")
-            || signal.contains("context window")
-            || signal.contains("contextwindow")
     }
 }
 #endif
@@ -562,7 +703,7 @@ private func densificationChunkPrompt(
         "Keep facts, intent, actions, outcomes, constraints, and errors.",
         "Remove low-signal UI chrome and duplicates.",
         "Return dense plain text only.",
-        "Target length: <= \(appleChunkTargetWordLimit) words.",
+        "Target length: <= \(densificationChunkTargetWordLimit) words.",
         "App: \(appName)",
         "Window: \(windowTitle)",
         "",
@@ -582,7 +723,7 @@ private func densificationMergePrompt(
         "Keep high-signal facts, intent, actions, outcomes, constraints, and errors.",
         "Remove duplicates and contradictions.",
         "Return dense plain text only.",
-        "Target length: <= \(appleMergeTargetWordLimit) words.",
+        "Target length: <= \(densificationMergeTargetWordLimit) words.",
         "App: \(appName)",
         "Window: \(windowTitle)",
         "",
