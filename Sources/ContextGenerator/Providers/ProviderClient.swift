@@ -42,7 +42,7 @@ public extension ProviderClient {
         }
         return try await requestText(
             request: ProviderTextRequest(
-                systemInstruction: "You produce concise, complete context with no missing key information.",
+                systemInstruction: densificationSystemInstruction,
                 prompt: densificationPrompt(for: request)
             ),
             apiKey: apiKey,
@@ -83,6 +83,12 @@ public enum ProviderClientFactory {
 private let providerRequestTimeoutSeconds: TimeInterval = 30
 private let localDebugResponseDelayNanoseconds: UInt64 = 3_000_000_000
 private let localDebugDensificationCharacterLimit = 200
+private let densificationSystemInstruction = "You produce concise, complete context with no missing key information."
+private let appleInitialChunkInputTokens = 1800
+private let appleMinimumChunkInputTokens = 320
+private let appleChunkTargetWordLimit = 180
+private let appleMergeTargetWordLimit = 260
+private let appleContextWindowExceededMessage = "Context Window Size Exceeded. Apple Foundation Models allow up to 4,096 tokens per session (including instructions, input, and output). Start a new session and retry with shorter input or output."
 
 private func providerRequestErrorMessage(from data: Data, fallback: String) -> String {
     guard
@@ -288,6 +294,52 @@ private struct GeminiProviderClient: ProviderClient {
 private struct AppleFoundationProviderClient: ProviderClient {
     let provider: ProviderName = .apple
 
+    func densify(request: DensificationRequest, apiKey: String, model: String) async throws -> String {
+        try await forceFailure()
+        if DevelopmentConfig.shared.localDebugResponsesEnabled {
+            AppLogger.debug("Local debug response enabled.")
+            try await Task.sleep(nanoseconds: localDebugResponseDelayNanoseconds)
+            return localDebugPrefixText(request.inputText, maxCharacters: localDebugDensificationCharacterLimit)
+        }
+
+#if canImport(FoundationModels)
+        if #available(macOS 26.0, *) {
+            guard SystemLanguageModel.default.availability == .available else {
+                throw AppError.providerRequestFailed(
+                    "Apple Foundation Models are not available on this Mac."
+                )
+            }
+
+            var chunkInputTokens = appleInitialChunkInputTokens
+            while true {
+                do {
+                    return try await densifyInChunks(
+                        request: request,
+                        apiKey: apiKey,
+                        model: model,
+                        chunkInputTokens: chunkInputTokens
+                    )
+                } catch {
+                    guard isContextWindowExceededError(error), chunkInputTokens > appleMinimumChunkInputTokens else {
+                        throw error
+                    }
+                    let nextChunkInputTokens = max(appleMinimumChunkInputTokens, chunkInputTokens / 2)
+                    guard nextChunkInputTokens < chunkInputTokens else {
+                        throw error
+                    }
+                    AppLogger.debug(
+                        "Apple densification exceeded context window. Retrying with smaller chunk budget [previous=\(chunkInputTokens) next=\(nextChunkInputTokens)]"
+                    )
+                    chunkInputTokens = nextChunkInputTokens
+                }
+            }
+        }
+#endif
+        throw AppError.providerRequestFailed(
+            "Apple Foundation Models are unavailable in this environment."
+        )
+    }
+
     func requestText(request: ProviderTextRequest, apiKey: String, model: String) async throws -> String {
 #if canImport(FoundationModels)
         if #available(macOS 26.0, *) {
@@ -296,25 +348,178 @@ private struct AppleFoundationProviderClient: ProviderClient {
                     "Apple Foundation Models are not available on this Mac."
                 )
             }
-            let session: LanguageModelSession
-            if
-                let instruction = request.systemInstruction?.trimmingCharacters(in: .whitespacesAndNewlines),
-                !instruction.isEmpty
-            {
-                session = LanguageModelSession(instructions: instruction)
-            } else {
-                session = LanguageModelSession()
+            let session = makeLanguageModelSession(systemInstruction: request.systemInstruction)
+            do {
+                let response = try await session.respond(to: request.prompt)
+                let text = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !text.isEmpty else {
+                    throw AppError.providerRequestFailed("Apple Foundation Models returned an empty response.")
+                }
+                return text
+            } catch let appError as AppError {
+                throw appError
+            } catch {
+                throw mappedAppleFoundationError(error)
             }
-            let response = try await session.respond(to: request.prompt)
-            let text = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !text.isEmpty else {
-                throw AppError.providerRequestFailed("Apple Foundation Models returned an empty response.")
-            }
-            return text
         }
 #endif
         throw AppError.providerRequestFailed(
             "Apple Foundation Models are unavailable in this environment."
         )
     }
+}
+
+#if canImport(FoundationModels)
+@available(macOS 26.0, *)
+private extension AppleFoundationProviderClient {
+    func densifyInChunks(
+        request: DensificationRequest,
+        apiKey: String,
+        model: String,
+        chunkInputTokens: Int
+    ) async throws -> String {
+        let planner = AppleFoundationContextWindowPlanner(maxChunkInputTokens: chunkInputTokens)
+        let chunks = planner.chunkInput(request.inputText)
+        guard !chunks.isEmpty else {
+            return ""
+        }
+
+        var partials: [String] = []
+        partials.reserveCapacity(chunks.count)
+        for (index, chunk) in chunks.enumerated() {
+            partials.append(
+                try await requestText(
+                    request: ProviderTextRequest(
+                        systemInstruction: densificationSystemInstruction,
+                        prompt: densificationChunkPrompt(
+                            inputText: chunk,
+                            appName: request.appName,
+                            windowTitle: request.windowTitle,
+                            chunkIndex: index + 1,
+                            totalChunks: chunks.count
+                        )
+                    ),
+                    apiKey: apiKey,
+                    model: model
+                )
+            )
+        }
+
+        var mergedPartials = partials
+        var pass = 1
+        while mergedPartials.count > 1 {
+            let mergeGroups = planner.mergeGroups(for: mergedPartials)
+            if mergeGroups.count == mergedPartials.count, mergeGroups.allSatisfy({ $0.count == 1 }) {
+                return mergedPartials.joined(separator: "\n\n")
+            }
+
+            var reducedPartials: [String] = []
+            reducedPartials.reserveCapacity(mergeGroups.count)
+            for group in mergeGroups {
+                reducedPartials.append(
+                    try await requestText(
+                        request: ProviderTextRequest(
+                            systemInstruction: densificationSystemInstruction,
+                            prompt: densificationMergePrompt(
+                                partials: group,
+                                appName: request.appName,
+                                windowTitle: request.windowTitle,
+                                pass: pass
+                            )
+                        ),
+                        apiKey: apiKey,
+                        model: model
+                    )
+                )
+            }
+            mergedPartials = reducedPartials
+            pass += 1
+        }
+
+        return mergedPartials.first ?? ""
+    }
+
+    func makeLanguageModelSession(systemInstruction: String?) -> LanguageModelSession {
+        if
+            let instruction = systemInstruction?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !instruction.isEmpty
+        {
+            return LanguageModelSession(instructions: instruction)
+        }
+        return LanguageModelSession()
+    }
+
+    func mappedAppleFoundationError(_ error: Error) -> AppError {
+        if isRawContextWindowExceededError(error) {
+            return .providerRequestFailed(appleContextWindowExceededMessage)
+        }
+        return .providerRequestFailed("Apple Foundation Models request failed: \(error.localizedDescription)")
+    }
+
+    func isContextWindowExceededError(_ error: Error) -> Bool {
+        if let appError = error as? AppError {
+            guard case let .providerRequestFailed(details) = appError else {
+                return false
+            }
+            return details.lowercased().contains("context window")
+        }
+        return isRawContextWindowExceededError(error)
+    }
+
+    func isRawContextWindowExceededError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        let signal = [
+            String(describing: error),
+            nsError.domain,
+            nsError.localizedDescription,
+            nsError.userInfo.description
+        ].joined(separator: " ").lowercased()
+        return signal.contains("exceededcontextwindowsize")
+            || signal.contains("context window")
+            || signal.contains("contextwindow")
+    }
+}
+#endif
+
+private func densificationChunkPrompt(
+    inputText: String,
+    appName: String,
+    windowTitle: String,
+    chunkIndex: Int,
+    totalChunks: Int
+) -> String {
+    [
+        "Process this chunk from one captured snapshot.",
+        "Chunk \(chunkIndex) of \(totalChunks).",
+        "Keep facts, intent, actions, outcomes, constraints, and errors.",
+        "Remove low-signal UI chrome and duplicates.",
+        "Return dense plain text only.",
+        "Target length: <= \(appleChunkTargetWordLimit) words.",
+        "App: \(appName)",
+        "Window: \(windowTitle)",
+        "",
+        inputText
+    ].joined(separator: "\n")
+}
+
+private func densificationMergePrompt(
+    partials: [String],
+    appName: String,
+    windowTitle: String,
+    pass: Int
+) -> String {
+    [
+        "Merge these partial summaries into one complete snapshot context.",
+        "Pass \(pass).",
+        "Keep high-signal facts, intent, actions, outcomes, constraints, and errors.",
+        "Remove duplicates and contradictions.",
+        "Return dense plain text only.",
+        "Target length: <= \(appleMergeTargetWordLimit) words.",
+        "App: \(appName)",
+        "Window: \(windowTitle)",
+        "",
+        partials.enumerated().map { index, partial in
+            "[\(index + 1)] \(partial)"
+        }.joined(separator: "\n\n")
+    ].joined(separator: "\n")
 }
