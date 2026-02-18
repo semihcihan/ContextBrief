@@ -34,14 +34,19 @@ public protocol ProviderClient {
 
 public extension ProviderClient {
     func densify(request: DensificationRequest, apiKey: String, model: String) async throws -> String {
+        let startedAt = Date()
         try await forceFailure()
         if DevelopmentConfig.shared.localDebugResponsesEnabled {
             AppLogger.debug("Local debug response enabled.")
             try await Task.sleep(nanoseconds: localDebugResponseDelayNanoseconds)
-            return localDebugPrefixText(request.inputText, maxCharacters: localDebugDensificationCharacterLimit)
+            let output = localDebugPrefixText(request.inputText, maxCharacters: localDebugDensificationCharacterLimit)
+            AppLogger.debug(
+                "Densification completed [provider=\(provider.rawValue) runs=1 chunked=false seconds=\(formattedElapsedSeconds(since: startedAt))]"
+            )
+            return output
         }
         do {
-            return try await requestText(
+            let output = try await requestText(
                 request: ProviderTextRequest(
                     systemInstruction: densificationSystemInstruction,
                     prompt: densificationPrompt(for: request)
@@ -49,6 +54,10 @@ public extension ProviderClient {
                 apiKey: apiKey,
                 model: model
             )
+            AppLogger.debug(
+                "Densification completed [provider=\(provider.rawValue) runs=1 chunked=false seconds=\(formattedElapsedSeconds(since: startedAt))]"
+            )
+            return output
         } catch {
             guard isContextWindowExceededError(error) else {
                 throw error
@@ -56,14 +65,24 @@ public extension ProviderClient {
             AppLogger.debug(
                 "Densification exceeded \(provider.rawValue) context window. Retrying with chunking fallback."
             )
-            return try await densifyWithAdaptiveChunking(
+            let stats = DensificationDebugStats()
+            let output = try await densifyWithAdaptiveChunking(
                 request: request,
                 apiKey: apiKey,
                 model: model,
-                initialChunkInputTokens: reactiveContextWindowInitialChunkInputTokens
+                initialChunkInputTokens: reactiveContextWindowInitialChunkInputTokens,
+                stats: stats
             )
+            AppLogger.debug(
+                "Densification completed [provider=\(provider.rawValue) runs=\(stats.runCount) chunked=true seconds=\(formattedElapsedSeconds(since: startedAt))]"
+            )
+            return output
         }
     }
+}
+
+private final class DensificationDebugStats {
+    var runCount = 0
 }
 
 private extension ProviderClient {
@@ -83,7 +102,8 @@ private extension ProviderClient {
         request: DensificationRequest,
         apiKey: String,
         model: String,
-        initialChunkInputTokens: Int
+        initialChunkInputTokens: Int,
+        stats: DensificationDebugStats
     ) async throws -> String {
         var chunkInputTokens = max(densificationMinimumChunkInputTokens, initialChunkInputTokens)
         while true {
@@ -92,7 +112,8 @@ private extension ProviderClient {
                     request: request,
                     apiKey: apiKey,
                     model: model,
-                    chunkInputTokens: chunkInputTokens
+                    chunkInputTokens: chunkInputTokens,
+                    stats: stats
                 )
             } catch {
                 guard isContextWindowExceededError(error), chunkInputTokens > densificationMinimumChunkInputTokens else {
@@ -114,7 +135,8 @@ private extension ProviderClient {
         request: DensificationRequest,
         apiKey: String,
         model: String,
-        chunkInputTokens: Int
+        chunkInputTokens: Int,
+        stats: DensificationDebugStats
     ) async throws -> String {
         let planner = AppleFoundationContextWindowPlanner(
             maxChunkInputTokens: chunkInputTokens,
@@ -132,6 +154,7 @@ private extension ProviderClient {
         var partials: [String] = []
         partials.reserveCapacity(chunks.count)
         for (index, chunk) in chunks.enumerated() {
+            stats.runCount += 1
             partials.append(
                 try await requestText(
                     request: ProviderTextRequest(
@@ -161,6 +184,7 @@ private extension ProviderClient {
             var reducedPartials: [String] = []
             reducedPartials.reserveCapacity(mergeGroups.count)
             for group in mergeGroups {
+                stats.runCount += 1
                 reducedPartials.append(
                     try await requestText(
                         request: ProviderTextRequest(
@@ -274,11 +298,15 @@ private let localDebugDensificationCharacterLimit = 200
 private let densificationSystemInstruction = "You produce concise, complete context with no missing key information."
 private let appleProactiveInitialChunkInputTokens = 1800
 private let densificationMinimumChunkInputTokens = 320
-private let reactiveContextWindowInitialChunkInputTokens = 12_000
+private let reactiveContextWindowInitialChunkInputTokens = 100_000
 private let densificationDefaultMergeInputTokens = 2_000
 private let densificationChunkTargetWordLimit = 180
 private let densificationMergeTargetWordLimit = 260
 private let appleContextWindowExceededMessage = "Context Window Size Exceeded. Apple Foundation Models allow up to 4,096 tokens per session (including instructions, input, and output). Start a new session and retry with shorter input or output."
+
+private func formattedElapsedSeconds(since startDate: Date) -> String {
+    String(format: "%.2f", Date().timeIntervalSince(startDate))
+}
 
 private func providerRequestErrorMessage(from data: Data, fallback: String) -> String {
     guard
@@ -611,11 +639,16 @@ private struct AppleFoundationProviderClient: ProviderClient {
     let provider: ProviderName = .apple
 
     func densify(request: DensificationRequest, apiKey: String, model: String) async throws -> String {
+        let startedAt = Date()
         try await forceFailure()
         if DevelopmentConfig.shared.localDebugResponsesEnabled {
             AppLogger.debug("Local debug response enabled.")
             try await Task.sleep(nanoseconds: localDebugResponseDelayNanoseconds)
-            return localDebugPrefixText(request.inputText, maxCharacters: localDebugDensificationCharacterLimit)
+            let output = localDebugPrefixText(request.inputText, maxCharacters: localDebugDensificationCharacterLimit)
+            AppLogger.debug(
+                "Densification completed [provider=\(provider.rawValue) runs=1 chunked=false seconds=\(formattedElapsedSeconds(since: startedAt))]"
+            )
+            return output
         }
 
 #if canImport(FoundationModels)
@@ -626,12 +659,18 @@ private struct AppleFoundationProviderClient: ProviderClient {
                 )
             }
 
-            return try await densifyWithAdaptiveChunking(
+            let stats = DensificationDebugStats()
+            let output = try await densifyWithAdaptiveChunking(
                 request: request,
                 apiKey: apiKey,
                 model: model,
-                initialChunkInputTokens: appleProactiveInitialChunkInputTokens
+                initialChunkInputTokens: appleProactiveInitialChunkInputTokens,
+                stats: stats
             )
+            AppLogger.debug(
+                "Densification completed [provider=\(provider.rawValue) runs=\(stats.runCount) chunked=true seconds=\(formattedElapsedSeconds(since: startedAt))]"
+            )
+            return output
         }
 #endif
         throw AppError.providerRequestFailed(

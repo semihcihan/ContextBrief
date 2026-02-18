@@ -20,6 +20,8 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
     private let keyField = NSSecureTextField(frame: .zero)
     private var modelRow: NSView?
     private var keyRow: NSView?
+    private let appleProviderWarningLabel = NSTextField(wrappingLabelWithString: "")
+    private var appleProviderWarningRow: NSView?
     private let infoLabel = NSTextField(labelWithString: "")
     private let validationSpinner = NSProgressIndicator()
     private let statusBalanceSpacer = NSView()
@@ -31,6 +33,8 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
     private var initialSnapshot: SetupSnapshot?
     private var onboardingCompletedAtLoad = false
     private let defaultInfoMessage = "Accessibility + Screen Recording are required."
+    private let appleProviderWarningMessage =
+        "Apple's on-device LLM may respond more slowly. Snapshot processing can take longer."
 
     init(
         permissionService: PermissionServicing,
@@ -107,6 +111,13 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
         fieldColumn.spacing = 8
         fieldColumn.translatesAutoresizingMaskIntoConstraints = false
         fieldColumn.addArrangedSubview(labeledRow(label: "Provider", view: providerPopup))
+        appleProviderWarningLabel.stringValue = appleProviderWarningMessage
+        appleProviderWarningLabel.textColor = .secondaryLabelColor
+        appleProviderWarningLabel.font = .preferredFont(forTextStyle: .subheadline)
+        appleProviderWarningLabel.maximumNumberOfLines = 0
+        let appleProviderWarningRow = warningRow(view: appleProviderWarningLabel)
+        self.appleProviderWarningRow = appleProviderWarningRow
+        fieldColumn.addArrangedSubview(appleProviderWarningRow)
         let modelRow = labeledRow(label: "Model", view: modelField)
         self.modelRow = modelRow
         fieldColumn.addArrangedSubview(modelRow)
@@ -182,6 +193,24 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
         NSLayoutConstraint.activate([
             text.widthAnchor.constraint(equalToConstant: 95),
             view.heightAnchor.constraint(equalToConstant: 26)
+        ])
+        return row
+    }
+
+    private func warningRow(view: NSView) -> NSView {
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.spacing = 10
+        row.alignment = .top
+        row.distribution = .fill
+        row.translatesAutoresizingMaskIntoConstraints = false
+        let spacer = NSView()
+        spacer.translatesAutoresizingMaskIntoConstraints = false
+        view.translatesAutoresizingMaskIntoConstraints = false
+        row.addArrangedSubview(spacer)
+        row.addArrangedSubview(view)
+        NSLayoutConstraint.activate([
+            spacer.widthAnchor.constraint(equalToConstant: 95)
         ])
         return row
     }
@@ -454,6 +483,7 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
     private func updateProviderFieldAvailability() {
         let enabled = !setupValidationInProgress
         let requiresCredentials = currentSelectedProvider().map(providerRequiresCredentials) ?? true
+        appleProviderWarningRow?.isHidden = currentSelectedProvider() != .apple
         modelRow?.isHidden = !requiresCredentials
         keyRow?.isHidden = !requiresCredentials
         modelField.isEnabled = enabled && requiresCredentials
@@ -626,6 +656,14 @@ extension SetupViewController {
         !(keyRow?.isHidden ?? true)
     }
 
+    func testingAppleProviderWarningVisible() -> Bool {
+        !(appleProviderWarningRow?.isHidden ?? true)
+    }
+
+    func testingAppleProviderWarningValue() -> String {
+        appleProviderWarningLabel.stringValue
+    }
+
     func testingModelValue() -> String {
         modelField.stringValue
     }
@@ -671,7 +709,7 @@ private extension ProviderName {
         case .gemini:
             return "Gemini"
         case .apple:
-            return "Apple Foundation"
+            return "Apple"
         }
     }
 }
