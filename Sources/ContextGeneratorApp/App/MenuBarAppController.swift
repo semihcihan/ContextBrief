@@ -789,14 +789,6 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
         let provider = forTitleGeneration
             ? developmentConfig.providerForTitleGeneration(selectedProvider: selectedProvider)
             : developmentConfig.providerForDensification(selectedProvider: selectedProvider)
-        if provider == selectedProvider,
-           (forTitleGeneration ? developmentConfig.enableAppleFoundationForTitleGeneration : developmentConfig.enableAppleFoundationForDensification),
-           !developmentConfig.appleFoundationAvailable
-        {
-            AppLogger.debug(
-                "Apple Foundation preferred in config but not available on this Mac (macOS 26+ and on-device model required), using selectedProvider=\(selectedProvider.rawValue)"
-            )
-        }
         let requiresCredentials = developmentConfig.requiresCredentials(for: provider)
         let model = state.selectedModel ?? ""
         guard !requiresCredentials || !model.isEmpty else {

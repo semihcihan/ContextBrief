@@ -18,6 +18,8 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
     private let providerPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let modelField = NSTextField(string: "")
     private let keyField = NSSecureTextField(frame: .zero)
+    private var modelRow: NSView?
+    private var keyRow: NSView?
     private let infoLabel = NSTextField(labelWithString: "")
     private let validationSpinner = NSProgressIndicator()
     private let statusBalanceSpacer = NSView()
@@ -105,8 +107,12 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
         fieldColumn.spacing = 8
         fieldColumn.translatesAutoresizingMaskIntoConstraints = false
         fieldColumn.addArrangedSubview(labeledRow(label: "Provider", view: providerPopup))
-        fieldColumn.addArrangedSubview(labeledRow(label: "Model", view: modelField))
-        fieldColumn.addArrangedSubview(labeledRow(label: "API Key", view: keyField))
+        let modelRow = labeledRow(label: "Model", view: modelField)
+        self.modelRow = modelRow
+        fieldColumn.addArrangedSubview(modelRow)
+        let keyRow = labeledRow(label: "API Key", view: keyField)
+        self.keyRow = keyRow
+        fieldColumn.addArrangedSubview(keyRow)
         stack.addArrangedSubview(fieldColumn)
         launchAtLoginCheckbox.target = self
         launchAtLoginCheckbox.action = #selector(toggleLaunchAtLogin)
@@ -345,10 +351,18 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
                 updateActionAvailability()
                 return
             }
-            selectProvider(selection.provider)
-            applySavedModelAndAPIKey(for: selection.provider, fallbackModel: selection.model)
+            if availableProviders().contains(selection.provider) {
+                selectProvider(selection.provider)
+                applySavedModelAndAPIKey(for: selection.provider, fallbackModel: selection.model)
+                initialSnapshot = currentSnapshot()
+                updateInfoLabelForLoadedState(selection: selection)
+                updateProviderFieldAvailability()
+                updateActionAvailability()
+                return
+            }
+            applySavedModelAndAPIKey(for: currentSelectedProvider())
             initialSnapshot = currentSnapshot()
-            updateInfoLabelForLoadedState(selection: selection)
+            updateInfoLabelForLoadedState(selection: nil)
             updateProviderFieldAvailability()
             updateActionAvailability()
         } catch {
@@ -361,11 +375,10 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
     }
 
     private func availableProviders() -> [ProviderName] {
-        var providers: [ProviderName] = [.openai, .anthropic, .gemini]
         if developmentConfig.appleFoundationProviderEnabled {
-            providers.append(.apple)
+            return [.apple, .openai, .anthropic, .gemini]
         }
-        return providers
+        return [.openai, .anthropic, .gemini]
     }
 
     private func providerRequiresCredentials(_ provider: ProviderName) -> Bool {
@@ -441,6 +454,8 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
     private func updateProviderFieldAvailability() {
         let enabled = !setupValidationInProgress
         let requiresCredentials = currentSelectedProvider().map(providerRequiresCredentials) ?? true
+        modelRow?.isHidden = !requiresCredentials
+        keyRow?.isHidden = !requiresCredentials
         modelField.isEnabled = enabled && requiresCredentials
         modelField.isEditable = enabled && requiresCredentials
         keyField.isEnabled = enabled && requiresCredentials
@@ -450,9 +465,8 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
             keyField.placeholderString = ""
             return
         }
-        let providerName = currentSelectedProvider()?.displayName ?? "selected provider"
-        modelField.placeholderString = "Not required for \(providerName)"
-        keyField.placeholderString = "Not required for \(providerName)"
+        modelField.placeholderString = nil
+        keyField.placeholderString = nil
     }
 
     private func defaultModel(for provider: ProviderName) -> String {
@@ -533,7 +547,17 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
             return
         }
         guard let selection else {
-            infoLabel.stringValue = onboardingCompletedAtLoad ? "" : "Select provider, model, and API key to complete setup."
+            guard let selectedProvider = currentSelectedProvider() else {
+                infoLabel.stringValue = onboardingCompletedAtLoad ? "" : "Select provider, model, and API key to complete setup."
+                return
+            }
+            if providerRequiresCredentials(selectedProvider) {
+                infoLabel.stringValue = onboardingCompletedAtLoad ? "" : "Select provider, model, and API key to complete setup."
+                return
+            }
+            infoLabel.stringValue = onboardingCompletedAtLoad
+                ? ""
+                : "\(selectedProvider.displayName) selected. Model and API key are not required."
             return
         }
         if providerRequiresCredentials(selection.provider) {
@@ -590,8 +614,16 @@ extension SetupViewController {
         modelField.isEnabled && modelField.isEditable
     }
 
+    func testingModelRowVisible() -> Bool {
+        !(modelRow?.isHidden ?? true)
+    }
+
     func testingKeyFieldEnabled() -> Bool {
         keyField.isEnabled && keyField.isEditable
+    }
+
+    func testingAPIKeyRowVisible() -> Bool {
+        !(keyRow?.isHidden ?? true)
     }
 
     func testingModelValue() -> String {

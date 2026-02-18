@@ -3,10 +3,6 @@
 <plist version="1.0">
 <dict>
     <key>enableLocalDebugProvider</key>
-    <true/>
-    <key>enableAppleFoundationForTitleGeneration</key>
-    <false/>
-    <key>enableAppleFoundationForDensification</key>
     <false/>
     <key>thirdPartyContextTitleRefreshEvery</key>
     <integer>3</integer>

@@ -27,36 +27,38 @@ private final class MockSetupKeychain: KeychainServicing {
 
 @MainActor
 final class SetupViewControllerTests: XCTestCase {
-    func testShowsAppleProviderWhenEnabledAndAvailable() throws {
+    func testShowsAppleProviderWhenAvailableAndSelectsItByDefault() throws {
         let (appStateService, _) = try makeAppStateService()
         let controller = makeController(
             appStateService: appStateService,
             developmentConfig: DevelopmentConfig(
                 enableLocalDebugProvider: false,
-                enableAppleFoundationForTitleGeneration: true,
-                enableAppleFoundationForDensification: false,
                 appleFoundationAvailableOverride: true
             )
         )
         controller.loadViewIfNeeded()
 
         XCTAssertTrue(controller.testingProviderTitles().contains("Apple Foundation"))
+        XCTAssertEqual(controller.testingSelectedProvider(), .apple)
+        XCTAssertEqual(controller.testingInfoLabelValue(), "Apple Foundation selected. Model and API key are not required.")
+        XCTAssertFalse(controller.testingModelRowVisible())
+        XCTAssertFalse(controller.testingAPIKeyRowVisible())
     }
 
-    func testSelectingAppleDisablesModelAndAPIKeyFields() throws {
+    func testSelectingAppleHidesModelAndAPIKeyFields() throws {
         let (appStateService, _) = try makeAppStateService()
         let controller = makeController(
             appStateService: appStateService,
             developmentConfig: DevelopmentConfig(
                 enableLocalDebugProvider: false,
-                enableAppleFoundationForTitleGeneration: true,
-                enableAppleFoundationForDensification: false,
                 appleFoundationAvailableOverride: true
             )
         )
         controller.loadViewIfNeeded()
         controller.testingSelectProvider(.apple)
 
+        XCTAssertFalse(controller.testingModelRowVisible())
+        XCTAssertFalse(controller.testingAPIKeyRowVisible())
         XCTAssertFalse(controller.testingModelFieldEnabled())
         XCTAssertFalse(controller.testingKeyFieldEnabled())
     }
@@ -81,8 +83,6 @@ final class SetupViewControllerTests: XCTestCase {
             appStateService: appStateService,
             developmentConfig: DevelopmentConfig(
                 enableLocalDebugProvider: false,
-                enableAppleFoundationForTitleGeneration: true,
-                enableAppleFoundationForDensification: false,
                 appleFoundationAvailableOverride: true
             )
         )
@@ -90,6 +90,8 @@ final class SetupViewControllerTests: XCTestCase {
         controller.testingSelectProvider(.openai)
 
         XCTAssertEqual(controller.testingSelectedProvider(), .openai)
+        XCTAssertTrue(controller.testingModelRowVisible())
+        XCTAssertTrue(controller.testingAPIKeyRowVisible())
         XCTAssertEqual(controller.testingModelValue(), "gpt-4.1-mini")
         XCTAssertEqual(controller.testingAPIKeyValue(), "sk-openai")
         XCTAssertEqual(controller.testingInfoLabelValue(), "Ready to finish setup.")
@@ -206,7 +208,8 @@ final class SetupViewControllerTests: XCTestCase {
 
     private func defaultDevelopmentConfig() -> DevelopmentConfig {
         DevelopmentConfig(
-            enableLocalDebugProvider: false
+            enableLocalDebugProvider: false,
+            appleFoundationAvailableOverride: false
         )
     }
 }

@@ -10,8 +10,6 @@ final class DevelopmentConfigTests: XCTestCase {
         let config = DevelopmentConfig(plistURL: missingURL, appleFoundationAvailableOverride: false)
 
         XCTAssertFalse(config.enableLocalDebugProvider)
-        XCTAssertFalse(config.enableAppleFoundationForTitleGeneration)
-        XCTAssertFalse(config.enableAppleFoundationForDensification)
         XCTAssertEqual(config.thirdPartyContextTitleRefreshEvery, 3)
         XCTAssertEqual(config.appleContextTitleRefreshEvery, 6)
         XCTAssertEqual(config.forcedProviderFailureChance, 0)
@@ -21,8 +19,6 @@ final class DevelopmentConfigTests: XCTestCase {
     func testLoadsValuesFromPlist() throws {
         let plistURL = try writePlist([
             "enableLocalDebugProvider": true,
-            "enableAppleFoundationForTitleGeneration": true,
-            "enableAppleFoundationForDensification": false,
             "thirdPartyContextTitleRefreshEvery": 5,
             "appleContextTitleRefreshEvery": 2,
             "forcedProviderFailureChance": 0.4
@@ -30,8 +26,6 @@ final class DevelopmentConfigTests: XCTestCase {
         let config = DevelopmentConfig(plistURL: plistURL, appleFoundationAvailableOverride: true)
 
         XCTAssertTrue(config.enableLocalDebugProvider)
-        XCTAssertTrue(config.enableAppleFoundationForTitleGeneration)
-        XCTAssertFalse(config.enableAppleFoundationForDensification)
         XCTAssertEqual(config.thirdPartyContextTitleRefreshEvery, 5)
         XCTAssertEqual(config.appleContextTitleRefreshEvery, 2)
 #if DEBUG
@@ -41,24 +35,21 @@ final class DevelopmentConfigTests: XCTestCase {
 #endif
     }
 
-    func testRoutingUsesAvailabilityAndFeatureFlags() {
+    func testRoutingUsesSelectedProviderWithoutImplicitAppleOverrides() {
         let configUnavailable = DevelopmentConfig(
-            enableAppleFoundationForTitleGeneration: true,
-            enableAppleFoundationForDensification: true,
             appleFoundationAvailableOverride: false
         )
-        XCTAssertEqual(configUnavailable.providerForTitleGeneration(selectedProvider: .openai), .openai)
+        XCTAssertEqual(configUnavailable.providerForTitleGeneration(selectedProvider: .apple), .apple)
         XCTAssertEqual(configUnavailable.providerForDensification(selectedProvider: .gemini), .gemini)
+        XCTAssertFalse(configUnavailable.appleFoundationProviderEnabled)
 
         let configAvailable = DevelopmentConfig(
-            enableAppleFoundationForTitleGeneration: true,
-            enableAppleFoundationForDensification: false,
             thirdPartyContextTitleRefreshEvery: 4,
             appleContextTitleRefreshEvery: 2,
             appleFoundationAvailableOverride: true
         )
-        XCTAssertEqual(configAvailable.providerForTitleGeneration(selectedProvider: .openai), .apple)
-        XCTAssertEqual(configAvailable.providerForDensification(selectedProvider: .openai), .openai)
+        XCTAssertEqual(configAvailable.providerForTitleGeneration(selectedProvider: .openai), .openai)
+        XCTAssertEqual(configAvailable.providerForDensification(selectedProvider: .apple), .apple)
         XCTAssertTrue(configAvailable.appleFoundationProviderEnabled)
         XCTAssertEqual(configAvailable.contextTitleRefreshEvery(for: .openai), 4)
         XCTAssertEqual(configAvailable.contextTitleRefreshEvery(for: .apple), 2)
