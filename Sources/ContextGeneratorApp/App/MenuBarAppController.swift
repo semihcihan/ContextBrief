@@ -139,7 +139,7 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
         if let setupStatusMenuItem {
             menu.addItem(setupStatusMenuItem)
         }
-        completeSetupMenuItem = addMenuItem("Complete Setup", action: #selector(openSettings), key: "", menu: menu)
+        completeSetupMenuItem = addMenuItem("Complete Setup", action: #selector(showSettingsWindowFromMenu), key: "", menu: menu)
         separatorAfterSetup = .separator()
         if let separatorAfterSetup {
             menu.addItem(separatorAfterSetup)
@@ -175,9 +175,9 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
         if let separatorAfterLibrary {
             menu.addItem(separatorAfterLibrary)
         }
-        checkForUpdatesMenuItem = addMenuItem("Check for Updates...", action: #selector(checkForUpdates), key: "", menu: menu)
-        _ = addMenuItem("Settings", action: #selector(openSettings), key: "", menu: menu)
-        _ = addMenuItem("Quit", action: #selector(quit), key: "", menu: menu)
+        checkForUpdatesMenuItem = addMenuItem("Check for Updates...", action: #selector(checkForUpdates), key: "", clearImage: true, menu: menu)
+        _ = addMenuItem("Settings", action: #selector(showSettingsWindowFromMenu), key: "", clearImage: true, menu: menu)
+        _ = addMenuItem("Quit", action: #selector(quit), key: "", clearImage: true, menu: menu)
         applyMenuShortcuts()
 
         statusItem.menu = menu
@@ -186,10 +186,20 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
         refreshMenuState()
     }
 
-    private func addMenuItem(_ title: String, action: Selector, key: String, indentationLevel: Int = 0, menu: NSMenu) -> NSMenuItem {
+    private func addMenuItem(
+        _ title: String,
+        action: Selector,
+        key: String,
+        indentationLevel: Int = 0,
+        clearImage: Bool = false,
+        menu: NSMenu
+    ) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
         item.target = self
         item.indentationLevel = indentationLevel
+        if clearImage {
+            item.image = nil
+        }
         menu.addItem(item)
         return item
     }
@@ -595,7 +605,7 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
         }
     }
 
-    @objc private func openSettings() {
+    @objc private func showSettingsWindowFromMenu() {
         presentSettings(source: "menu")
     }
 
