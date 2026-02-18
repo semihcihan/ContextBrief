@@ -11,9 +11,11 @@ public protocol Densifying {
 
 public final class DensificationService: Densifying {
     private let session: URLSession
+    private let maxDensificationInputTokens: Int
 
-    public init(session: URLSession = .shared) {
+    public init(session: URLSession = .shared, maxDensificationInputTokens: Int = 64_000) {
         self.session = session
+        self.maxDensificationInputTokens = maxDensificationInputTokens
     }
 
     public func densify(
@@ -22,6 +24,10 @@ public final class DensificationService: Densifying {
         model: String,
         apiKey: String
     ) async throws -> String {
+        let estimated = TokenCountEstimator.estimate(for: snapshot.combinedText)
+        if estimated > maxDensificationInputTokens {
+            throw AppError.densificationInputTooLong(estimatedTokens: estimated, limit: maxDensificationInputTokens)
+        }
         let client = ProviderClientFactory.make(provider: provider, session: session)
         let request = DensificationRequest(
             inputText: snapshot.combinedText,
