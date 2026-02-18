@@ -14,32 +14,21 @@ public final class CaptureWorkflow {
 
     private let maxDensificationAttempts = 2
     private let densificationRetryDelayNanoseconds: UInt64 = 500_000_000
-    private let captureService: ContextCapturing
     private let sessionManager: ContextSessionManager
     private let repository: ContextRepositorying
     private let densificationService: Densifying
     private let keychain: KeychainServicing
 
     public init(
-        captureService: ContextCapturing,
         sessionManager: ContextSessionManager,
         repository: ContextRepositorying,
         densificationService: Densifying,
         keychain: KeychainServicing
     ) {
-        self.captureService = captureService
         self.sessionManager = sessionManager
         self.repository = repository
         self.densificationService = densificationService
         self.keychain = keychain
-    }
-
-    public func runCapture() async throws -> CaptureWorkflowResult {
-        let (capturedSnapshot, screenshotData) = try captureService.capture()
-        return try await runCapture(
-            capturedSnapshot: capturedSnapshot,
-            screenshotData: screenshotData
-        )
     }
 
     public func runCapture(

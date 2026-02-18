@@ -34,16 +34,7 @@ public protocol ProviderClient {
 
 public extension ProviderClient {
     func densify(request: DensificationRequest, apiKey: String, model: String) async throws -> String {
-        let forcedFailureChance = DevelopmentConfig.shared.forcedProviderFailureChance
-        if forcedFailureChance > 0 {
-            let randomValue = Double.random(in: 0 ... 1)
-            if randomValue < forcedFailureChance {
-                AppLogger.debug(
-                    "Forced provider failure triggered in densify. chance=\(forcedFailureChance) roll=\(randomValue)"
-                )
-                throw AppError.providerRequestFailed("Forced provider failure for debugging.")
-            }
-        }
+        try await forceFailure()
         if DevelopmentConfig.shared.localDebugResponsesEnabled {
             AppLogger.debug("Local debug response enabled.")
             try await Task.sleep(nanoseconds: localDebugResponseDelayNanoseconds)
@@ -57,6 +48,20 @@ public extension ProviderClient {
             apiKey: apiKey,
             model: model
         )
+    }
+}
+
+private extension ProviderClient {
+    func forceFailure() async throws {
+        let forcedFailureChance = DevelopmentConfig.shared.forcedProviderFailureChance
+        guard forcedFailureChance > 0 else {
+            return
+        }
+        let randomValue = Double.random(in: 0 ... 1)
+        if randomValue < forcedFailureChance {
+            try await Task.sleep(nanoseconds: localDebugResponseDelayNanoseconds)
+            throw AppError.providerRequestFailed("Forced provider failure for debugging.")
+        }
     }
 }
 

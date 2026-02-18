@@ -69,6 +69,9 @@ public final class ContextCaptureService: ContextCapturing {
         guard let frontmostApp = NSWorkspace.shared.frontmostApplication else {
             throw AppError.noFrontmostApp
         }
+        guard frontmostApp.processIdentifier != ProcessInfo.processInfo.processIdentifier else {
+            throw AppError.captureTargetIsContextBrief
+        }
 
         let appName = frontmostApp.localizedName ?? "Unknown App"
         let bundleIdentifier = frontmostApp.bundleIdentifier ?? "unknown.bundle"

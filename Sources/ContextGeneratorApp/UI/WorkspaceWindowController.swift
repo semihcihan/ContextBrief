@@ -52,6 +52,7 @@ final class WorkspaceWindowController: NSWindowController {
         repository: ContextRepositorying,
         sessionManager: ContextSessionManager,
         onRetryFailedSnapshot: @escaping (UUID) async throws -> Snapshot,
+        onRetryFailedSnapshots: @escaping ([UUID]) async -> SnapshotProcessingCoordinator.RetryBatchResult,
         onSetupComplete: @escaping () -> Void,
         onShortcutsUpdated: @escaping () -> [String],
         onShortcutRecordingStateChanged: @escaping (Bool) -> Void,
@@ -73,7 +74,8 @@ final class WorkspaceWindowController: NSWindowController {
             repository: repository,
             sessionManager: sessionManager,
             onSelectionChange: onSelectionChange,
-            retryFailedSnapshot: onRetryFailedSnapshot
+            retryFailedSnapshot: onRetryFailedSnapshot,
+            retryFailedSnapshots: onRetryFailedSnapshots
         )
         trashLibraryController = TrashLibraryController(
             sessionManager: sessionManager,

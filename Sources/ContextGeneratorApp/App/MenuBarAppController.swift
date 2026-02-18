@@ -19,11 +19,17 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
         keychain: keychain
     )
     private lazy var workflow = CaptureWorkflow(
-        captureService: captureService,
         sessionManager: sessionManager,
         repository: repository,
         densificationService: densificationService,
         keychain: keychain
+    )
+    private lazy var snapshotProcessingCoordinator = SnapshotProcessingCoordinator(
+        captureService: captureService,
+        captureWorkflow: workflow,
+        retryWorkflow: snapshotRetryWorkflow,
+        sessionManager: sessionManager,
+        repository: repository
     )
     private lazy var exportService = ContextExportService(repository: repository)
     private let permissionService: PermissionServicing = PermissionService()
@@ -49,14 +55,11 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
     private var checkForUpdatesMenuItem: NSMenuItem?
     private var globalHotkeyManager: GlobalHotkeyManager?
     private var areGlobalHotkeysSuspended = false
-    private let captureProcessingQueue = CaptureProcessingQueue()
-    private let captureExecutionQueue = DispatchQueue(label: "com.contextbrief.capture.execution", qos: .userInitiated)
-    private var activeRetryOperations = 0
-    private var deferredUndoForInFlightCapture = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppLogger.debug("App launch finished. debugLoggingEnabled=\(AppLogger.debugLoggingEnabled)")
         eventTracker.track(.appReady)
+        snapshotProcessingCoordinator.delegate = self
         configureLaunchAtLoginIfNeeded()
         setupMainMenu()
         setupStatusItem()
@@ -260,7 +263,7 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
             newContextMenuItem?.isEnabled = setupReady && (hasSnapshotInCurrent || isCaptureInProgress)
             copyDenseMenuItem?.isEnabled = hasSnapshotInCurrent && !isAnyProcessing
             AppLogger.debug(
-                "refreshMenuState onboardingCompleted=\(state.onboardingCompleted) hasPermissions=\(hasPermissions) hasProviderConfiguration=\(hasProviderConfiguration) setupReady=\(setupReady) currentContextId=\(currentContext?.id.uuidString ?? "-") currentContextTitle=\(currentContext?.title ?? "-") hasSnapshotInCurrent=\(hasSnapshotInCurrent) failedSnapshots=\(failedSnapshotCount) captureInProgress=\(isCaptureInProgress) activeRetryOperations=\(activeRetryOperations) queuedCaptures=\(captureProcessingQueue.queuedCount) deferredUndo=\(deferredUndoForInFlightCapture)"
+                "refreshMenuState onboardingCompleted=\(state.onboardingCompleted) hasPermissions=\(hasPermissions) hasProviderConfiguration=\(hasProviderConfiguration) setupReady=\(setupReady) currentContextId=\(currentContext?.id.uuidString ?? "-") currentContextTitle=\(currentContext?.title ?? "-") hasSnapshotInCurrent=\(hasSnapshotInCurrent) failedSnapshots=\(failedSnapshotCount) captureInProgress=\(isCaptureInProgress) activeRetryOperations=\(snapshotProcessingCoordinator.activeRetryCount) queuedCaptures=\(snapshotProcessingCoordinator.queuedCaptureCount)"
             )
             applySetupVisibility(setupReady: setupReady)
             setHidden(retryFailedSnapshotsMenuItem, hidden: !setupReady || failedSnapshotCount == 0)
@@ -327,18 +330,7 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
             refreshMenuState()
             return
         }
-
-        let queuedRequest = QueuedCaptureRequest(source: source)
-        switch captureProcessingQueue.requestCapture(queuedRequest) {
-        case .queued(let queuedCount):
-            updateFeedback(queuedCount == 1 ? "Snapshot queued for processing" : "\(queuedCount) snapshots queued for processing")
-            AppLogger.info(
-                "Capture queued source=\(source) queuedCount=\(queuedCount)"
-            )
-            refreshMenuState()
-        case .startNow(let request):
-            startCaptureProcessing(request)
-        }
+        snapshotProcessingCoordinator.requestCapture(source: source)
     }
 
     private func canCapture(source: String) -> Bool {
@@ -362,6 +354,11 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
                 presentSettings(source: "capture_blocked")
                 return false
             }
+            if NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier {
+                AppLogger.debug("captureContext blocked: app itself is frontmost")
+                eventTracker.track(.captureBlocked, parameters: ["reason": "self_frontmost", "source": source])
+                return false
+            }
         } catch {
             reportUnexpectedNonFatal(error, context: "capture_state_check")
             AppLogger.error("captureContext state check failed: \(error.localizedDescription)")
@@ -375,136 +372,6 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
             return false
         }
         return true
-    }
-
-    private func startCaptureProcessing(_ request: QueuedCaptureRequest) {
-        AppLogger.info(
-            "Capture processing started source=\(request.source)"
-        )
-        eventTracker.track(.captureStarted, parameters: ["source": request.source])
-        refreshMenuState()
-        Task {
-            do {
-                let (capturedSnapshot, screenshotData) = try await captureSnapshot()
-                AppLogger.debug(
-                    "Capture snapshot created source=\(request.source) capturedSnapshot=\(capturedSnapshot.id.uuidString)"
-                )
-                let result: CaptureWorkflowResult
-                do {
-                    result = try await workflow.runCapture(
-                        capturedSnapshot: capturedSnapshot,
-                        screenshotData: screenshotData
-                    )
-                } catch {
-                    reportUnexpectedNonFatal(error, context: "capture_workflow")
-                    await MainActor.run { [weak self] in
-                        self?.deferredUndoForInFlightCapture = false
-                    }
-                    if let appError = error as? AppError {
-                        switch appError {
-                        case .providerRequestFailed(let details):
-                            updateFeedback("Model request failed: \(details)")
-                        default:
-                            updateFeedback("Snapshot failed: \(appError.localizedDescription)")
-                        }
-                    } else {
-                        updateFeedback("Snapshot failed: \(error.localizedDescription)")
-                    }
-                    eventTracker.track(
-                        .captureFailed,
-                        parameters: [
-                            "stage": "workflow",
-                            "error": analyticsErrorCode(error)
-                        ]
-                    )
-                    AppLogger.error("Capture failed: \(error.localizedDescription)")
-                    await MainActor.run { [weak self] in
-                        self?.completeCaptureAndStartNextIfNeeded()
-                    }
-                    return
-                }
-                let removedInFlight = await MainActor.run { [weak self] in
-                    self?.consumeDeferredUndoAfterCapture() ?? false
-                }
-                if removedInFlight {
-                    await MainActor.run { [weak self] in
-                        self?.completeCaptureAndStartNextIfNeeded()
-                    }
-                    AppLogger.info("Capture discarded due to deferred undo")
-                    return
-                }
-                if result.snapshot.status == .failed {
-                    eventTracker.track(
-                        .captureFailed,
-                        parameters: [
-                            "stage": "densification",
-                            "error": result.snapshot.failureMessage ?? "densification_failed"
-                        ]
-                    )
-                    updateFeedback("Snapshot failed. Open Context Library to retry or delete.")
-                    AppLogger.error(
-                        "Capture densification failed snapshotId=\(result.snapshot.id.uuidString) reason=\(result.snapshot.failureMessage ?? "-")"
-                    )
-                    await MainActor.run { [weak self] in
-                        self?.completeCaptureAndStartNextIfNeeded()
-                    }
-                    return
-                }
-                AppLogger.debug("captureContext success snapshotId=\(result.snapshot.id.uuidString) contextId=\(result.context.id.uuidString)")
-                eventTracker.track(.captureSucceeded, parameters: ["sequence": result.snapshot.sequence])
-                updateFeedback("Snapshot added to \(result.context.title)")
-                await applyGeneratedNames(result)
-                await MainActor.run { [weak self] in
-                    self?.completeCaptureAndStartNextIfNeeded()
-                }
-                AppLogger.info("Capture complete snapshot=\(result.snapshot.id.uuidString)")
-            } catch {
-                reportUnexpectedNonFatal(error, context: "capture_snapshot")
-                await MainActor.run { [weak self] in
-                    self?.deferredUndoForInFlightCapture = false
-                }
-                if let appError = error as? AppError {
-                    updateFeedback("Snapshot failed: \(appError.localizedDescription)")
-                } else {
-                    updateFeedback("Snapshot failed: \(error.localizedDescription)")
-                }
-                eventTracker.track(
-                    .captureFailed,
-                    parameters: [
-                        "stage": "capture",
-                        "error": analyticsErrorCode(error)
-                    ]
-                )
-                AppLogger.error("Capture snapshot failed source=\(request.source) error=\(error.localizedDescription)")
-                await MainActor.run { [weak self] in
-                    self?.completeCaptureAndStartNextIfNeeded()
-                }
-            }
-        }
-    }
-
-    private func captureSnapshot() async throws -> (CapturedSnapshot, Data?) {
-        try await withCheckedThrowingContinuation { continuation in
-            captureExecutionQueue.async { [captureService] in
-                do {
-                    continuation.resume(returning: try captureService.capture())
-                } catch {
-                    continuation.resume(throwing: error)
-                }
-            }
-        }
-    }
-
-    private func completeCaptureAndStartNextIfNeeded() {
-        let completion = captureProcessingQueue.completeCurrentCapture()
-        refreshMenuState()
-        guard case .startNext(let nextRequest, let remainingQueued) = completion else {
-            return
-        }
-        AppLogger.info(
-            "Starting queued capture source=\(nextRequest.source) remainingQueue=\(remainingQueued)"
-        )
-        startCaptureProcessing(nextRequest)
     }
 
     @objc private func undoLastCapture() {
@@ -572,51 +439,36 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
             refreshMenuState()
             return
         }
-        guard let context = ((try? sessionManager.currentContextIfExists()) ?? nil) else {
-            updateFeedback("No context selected")
-            refreshMenuState()
-            return
-        }
-        guard let failedSnapshots = try? repository.snapshots(in: context.id).filter({ $0.status == .failed }), !failedSnapshots.isEmpty else {
-            updateFeedback("No failed snapshots to retry")
-            refreshMenuState()
-            return
-        }
-
-        updateFeedback(
-            failedSnapshots.count == 1
-                ? "Retrying 1 failed snapshot..."
-                : "Retrying \(failedSnapshots.count) failed snapshots..."
-        )
         Task {
-            await MainActor.run { [weak self] in
-                self?.beginRetryOperation()
-            }
-            var succeededCount = 0
-            var failedCount = 0
-            for snapshot in failedSnapshots {
-                do {
-                    _ = try await snapshotRetryWorkflow.retryFailedSnapshot(snapshot.id)
-                    succeededCount += 1
-                } catch {
-                    failedCount += 1
-                    AppLogger.error("retryFailedSnapshots failed snapshotId=\(snapshot.id.uuidString) error=\(error.localizedDescription)")
+            do {
+                switch try await snapshotProcessingCoordinator.retrySelectionForCurrentContext() {
+                case .noContext:
+                    await MainActor.run {
+                        self.updateFeedback("No context selected")
+                        self.refreshMenuState()
+                    }
+                case .noFailedSnapshots:
+                    await MainActor.run {
+                        self.updateFeedback(SnapshotProcessingCoordinator.noFailedSnapshotsMessage)
+                        self.refreshMenuState()
+                    }
+                case .snapshotIds(let snapshotIds):
+                    await MainActor.run {
+                        self.updateFeedback(SnapshotProcessingCoordinator.retryingMessage(for: snapshotIds.count))
+                    }
+                    let summary = await self.snapshotProcessingCoordinator.retrySnapshots(snapshotIds)
+                    await MainActor.run {
+                        self.updateFeedback(SnapshotProcessingCoordinator.retrySummaryMessage(summary))
+                        self.refreshMenuState()
+                    }
                 }
-            }
-            let finalSucceededCount = succeededCount
-            let finalFailedCount = failedCount
-            await MainActor.run { [weak self] in
-                self?.endRetryOperation()
-                if finalFailedCount == 0 {
-                    self?.updateFeedback(
-                        finalSucceededCount == 1
-                            ? "Retried 1 failed snapshot"
-                            : "Retried \(finalSucceededCount) failed snapshots"
-                    )
-                } else {
-                    self?.updateFeedback("Retried \(finalSucceededCount), failed \(finalFailedCount)")
+            } catch {
+                reportUnexpectedNonFatal(error, context: "retry_failed_snapshots_preflight")
+                AppLogger.error("retryFailedSnapshots preflight failed: \(error.localizedDescription)")
+                await MainActor.run {
+                    self.updateFeedback("Retry failed")
+                    self.refreshMenuState()
                 }
-                self?.refreshMenuState()
             }
         }
     }
@@ -779,21 +631,13 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
                 guard let self else {
                     throw CancellationError()
                 }
-                await MainActor.run {
-                    self.beginRetryOperation()
+                return try await self.snapshotProcessingCoordinator.retrySnapshot(snapshotId)
+            },
+            onRetryFailedSnapshots: { [weak self] snapshotIds in
+                guard let self else {
+                    return SnapshotProcessingCoordinator.RetryBatchResult(succeeded: 0, failed: snapshotIds.count)
                 }
-                do {
-                    let retried = try await self.snapshotRetryWorkflow.retryFailedSnapshot(snapshotId)
-                    await MainActor.run {
-                        self.endRetryOperation()
-                    }
-                    return retried
-                } catch {
-                    await MainActor.run {
-                        self.endRetryOperation()
-                    }
-                    throw error
-                }
+                return await self.snapshotProcessingCoordinator.retrySnapshots(snapshotIds)
             },
             onSetupComplete: { [weak self] in
                 self?.updateFeedback("Setup complete")
@@ -814,23 +658,6 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
         return created
     }
 
-    private func consumeDeferredUndoAfterCapture() -> Bool {
-        guard deferredUndoForInFlightCapture else {
-            return false
-        }
-        deferredUndoForInFlightCapture = false
-        do {
-            let removed = try sessionManager.undoLastCaptureInCurrentContext()
-            updateFeedback("Moved \(removed.title) to trash")
-            return true
-        } catch {
-            reportUnexpectedNonFatal(error, context: "deferred_undo_after_capture")
-            AppLogger.error("Deferred undo failed: \(error.localizedDescription)")
-            updateFeedback("Undo failed")
-            return false
-        }
-    }
-
     private func contextLabel(currentContext: Context?, hasSnapshotInCurrent: Bool) -> String {
         guard let currentContext else {
             return "New Context"
@@ -839,11 +666,11 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
     }
 
     private var isCaptureInProgress: Bool {
-        captureProcessingQueue.isCaptureInProgress
+        snapshotProcessingCoordinator.isCaptureInProgress
     }
 
     private var isAnyProcessing: Bool {
-        isCaptureInProgress || activeRetryOperations > 0
+        snapshotProcessingCoordinator.isAnyProcessing
     }
 
     private func statusItemTitle() -> String {
@@ -852,25 +679,15 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
 
     private func processingStatusText() -> String? {
         if isCaptureInProgress {
-            guard captureProcessingQueue.queuedCount > 0 else {
+            guard snapshotProcessingCoordinator.queuedCaptureCount > 0 else {
                 return "Processing new snapshot..."
             }
-            return "Processing new snapshot... (\(captureProcessingQueue.queuedCount) queued)"
+            return "Processing new snapshot... (\(snapshotProcessingCoordinator.queuedCaptureCount) queued)"
         }
-        guard activeRetryOperations > 0 else {
+        guard snapshotProcessingCoordinator.activeRetryCount > 0 else {
             return nil
         }
         return "Processing new snapshot..."
-    }
-
-    private func beginRetryOperation() {
-        activeRetryOperations += 1
-        refreshMenuState()
-    }
-
-    private func endRetryOperation() {
-        activeRetryOperations = max(0, activeRetryOperations - 1)
-        refreshMenuState()
     }
 
     private func hasSnapshotsInCurrentContext() -> Bool {
@@ -1140,6 +957,8 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
         switch appError {
         case .noFrontmostApp:
             return "no_frontmost_app"
+        case .captureTargetIsContextBrief:
+            return "self_frontmost"
         case .noCurrentContext:
             return "no_current_context"
         case .noCaptureToUndo:
@@ -1192,5 +1011,120 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
             mask.insert(.shift)
         }
         item.keyEquivalentModifierMask = mask
+    }
+}
+
+extension MenuBarAppController: SnapshotProcessingCoordinatorDelegate {
+    @MainActor
+    func snapshotProcessingCoordinatorDidChangeProcessingState(_ coordinator: SnapshotProcessingCoordinator) {
+        refreshMenuState()
+    }
+
+    @MainActor
+    func snapshotProcessingCoordinator(
+        _ coordinator: SnapshotProcessingCoordinator,
+        didQueueCaptureFrom source: String,
+        queuedCount: Int
+    ) {
+        updateFeedback(queuedCount == 1 ? "Snapshot queued for processing" : "\(queuedCount) snapshots queued for processing")
+        AppLogger.info(
+            "Capture queued source=\(source) queuedCount=\(queuedCount)"
+        )
+    }
+
+    @MainActor
+    func snapshotProcessingCoordinator(
+        _ coordinator: SnapshotProcessingCoordinator,
+        didStartCaptureFrom source: String
+    ) {
+        AppLogger.info(
+            "Capture processing started source=\(source)"
+        )
+        eventTracker.track(.captureStarted, parameters: ["source": source])
+    }
+
+    @MainActor
+    func snapshotProcessingCoordinator(
+        _ coordinator: SnapshotProcessingCoordinator,
+        didFinishCaptureFrom source: String,
+        result: CaptureWorkflowResult
+    ) {
+        if result.snapshot.status == .failed {
+            eventTracker.track(
+                .captureFailed,
+                parameters: [
+                    "stage": "densification",
+                    "error": result.snapshot.failureMessage ?? "densification_failed"
+                ]
+            )
+            updateFeedback("Snapshot failed. Open Context Library to retry or delete.")
+            AppLogger.error(
+                "Capture densification failed source=\(source) snapshotId=\(result.snapshot.id.uuidString) reason=\(result.snapshot.failureMessage ?? "-")"
+            )
+            return
+        }
+        AppLogger.debug("captureContext success source=\(source) snapshotId=\(result.snapshot.id.uuidString) contextId=\(result.context.id.uuidString)")
+        eventTracker.track(.captureSucceeded, parameters: ["sequence": result.snapshot.sequence])
+        updateFeedback("Snapshot added to \(result.context.title)")
+        Task {
+            await applyGeneratedNames(result)
+            await MainActor.run {
+                self.refreshMenuState()
+            }
+        }
+        AppLogger.info("Capture complete source=\(source) snapshot=\(result.snapshot.id.uuidString)")
+    }
+
+    @MainActor
+    func snapshotProcessingCoordinator(
+        _ coordinator: SnapshotProcessingCoordinator,
+        didFailCaptureFrom source: String,
+        stage: SnapshotProcessingCoordinator.CaptureFailureStage,
+        error: Error
+    ) {
+        switch stage {
+        case .capture:
+            if let appError = error as? AppError {
+                if case .captureTargetIsContextBrief = appError {
+                    eventTracker.track(.captureBlocked, parameters: ["reason": "self_frontmost", "source": source])
+                    AppLogger.debug("Capture skipped because Context Brief is frontmost")
+                    return
+                }
+            }
+            reportUnexpectedNonFatal(error, context: "capture_snapshot")
+            if let appError = error as? AppError {
+                updateFeedback("Snapshot failed: \(appError.localizedDescription)")
+            } else {
+                updateFeedback("Snapshot failed: \(error.localizedDescription)")
+            }
+            eventTracker.track(
+                .captureFailed,
+                parameters: [
+                    "stage": "capture",
+                    "error": analyticsErrorCode(error)
+                ]
+            )
+            AppLogger.error("Capture snapshot failed source=\(source) error=\(error.localizedDescription)")
+        case .workflow:
+            reportUnexpectedNonFatal(error, context: "capture_workflow")
+            if let appError = error as? AppError {
+                switch appError {
+                case .providerRequestFailed(let details):
+                    updateFeedback("Model request failed: \(details)")
+                default:
+                    updateFeedback("Snapshot failed: \(appError.localizedDescription)")
+                }
+            } else {
+                updateFeedback("Snapshot failed: \(error.localizedDescription)")
+            }
+            eventTracker.track(
+                .captureFailed,
+                parameters: [
+                    "stage": "workflow",
+                    "error": analyticsErrorCode(error)
+                ]
+            )
+            AppLogger.error("Capture failed source=\(source) error=\(error.localizedDescription)")
+        }
     }
 }
