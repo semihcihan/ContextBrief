@@ -97,13 +97,20 @@ final class ContextLibraryController: NSViewController, NSOutlineViewDataSource,
     private func setupUI() {
         let splitView = NSSplitView()
         splitView.isVertical = true
-        splitView.dividerStyle = .thin
         splitView.translatesAutoresizingMaskIntoConstraints = false
 
         let leftPane = NSView()
         let rightPane = NSView()
+        let detailContainer = NSVisualEffectView()
         leftPane.translatesAutoresizingMaskIntoConstraints = false
         rightPane.translatesAutoresizingMaskIntoConstraints = false
+        detailContainer.material = .underWindowBackground
+        detailContainer.blendingMode = .withinWindow
+        detailContainer.state = .active
+        detailContainer.wantsLayer = true
+        detailContainer.layer?.cornerRadius = 12
+        detailContainer.layer?.masksToBounds = true
+        detailContainer.translatesAutoresizingMaskIntoConstraints = false
         splitView.addSubview(leftPane)
         splitView.addSubview(rightPane)
 
@@ -114,6 +121,10 @@ final class ContextLibraryController: NSViewController, NSOutlineViewDataSource,
         outlineView.usesAlternatingRowBackgroundColors = false
         outlineView.dataSource = self
         outlineView.delegate = self
+        outlineView.rowHeight = max(
+            outlineView.rowHeight,
+            NSFont.preferredFont(forTextStyle: .headline).pointSize + 8
+        )
         outlineView.menu = contextMenu
 
         outlineScrollView.documentView = outlineView
@@ -121,20 +132,25 @@ final class ContextLibraryController: NSViewController, NSOutlineViewDataSource,
         outlineScrollView.translatesAutoresizingMaskIntoConstraints = false
 
         detailTextView.isEditable = false
-        detailTextView.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        detailTextView.textColor = .labelColor
+        detailTextView.font = NSFont.preferredFont(forTextStyle: .body)
         detailTextView.isVerticallyResizable = true
         detailTextView.isHorizontallyResizable = false
         detailTextView.autoresizingMask = [.width]
         detailTextView.textContainerInset = NSSize(width: 12, height: 12)
         detailTextView.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
         detailTextView.textContainer?.widthTracksTextView = true
+        detailTextView.drawsBackground = false
+        detailTextView.backgroundColor = .clear
         detailScrollView.documentView = detailTextView
         detailScrollView.hasVerticalScroller = true
+        detailScrollView.drawsBackground = false
         detailScrollView.translatesAutoresizingMaskIntoConstraints = false
 
         view.addSubview(splitView)
         leftPane.addSubview(outlineScrollView)
-        rightPane.addSubview(detailScrollView)
+        rightPane.addSubview(detailContainer)
+        detailContainer.addSubview(detailScrollView)
 
         NSLayoutConstraint.activate([
             splitView.topAnchor.constraint(equalTo: view.topAnchor, constant: 12),
@@ -142,17 +158,22 @@ final class ContextLibraryController: NSViewController, NSOutlineViewDataSource,
             splitView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -12),
             splitView.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -12),
 
-            leftPane.widthAnchor.constraint(equalToConstant: 360),
+            leftPane.widthAnchor.constraint(equalToConstant: 320),
 
             outlineScrollView.topAnchor.constraint(equalTo: leftPane.topAnchor),
             outlineScrollView.leadingAnchor.constraint(equalTo: leftPane.leadingAnchor),
             outlineScrollView.trailingAnchor.constraint(equalTo: leftPane.trailingAnchor),
             outlineScrollView.bottomAnchor.constraint(equalTo: leftPane.bottomAnchor),
 
-            detailScrollView.topAnchor.constraint(equalTo: rightPane.topAnchor),
-            detailScrollView.leadingAnchor.constraint(equalTo: rightPane.leadingAnchor),
-            detailScrollView.trailingAnchor.constraint(equalTo: rightPane.trailingAnchor),
-            detailScrollView.bottomAnchor.constraint(equalTo: rightPane.bottomAnchor)
+            detailContainer.topAnchor.constraint(equalTo: rightPane.topAnchor),
+            detailContainer.leadingAnchor.constraint(equalTo: rightPane.leadingAnchor),
+            detailContainer.trailingAnchor.constraint(equalTo: rightPane.trailingAnchor),
+            detailContainer.bottomAnchor.constraint(equalTo: rightPane.bottomAnchor),
+
+            detailScrollView.topAnchor.constraint(equalTo: detailContainer.topAnchor),
+            detailScrollView.leadingAnchor.constraint(equalTo: detailContainer.leadingAnchor),
+            detailScrollView.trailingAnchor.constraint(equalTo: detailContainer.trailingAnchor),
+            detailScrollView.bottomAnchor.constraint(equalTo: detailContainer.bottomAnchor)
         ])
 
         contextMenu.delegate = self
@@ -173,6 +194,13 @@ final class ContextLibraryController: NSViewController, NSOutlineViewDataSource,
 
     func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
         item is Context
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, heightOfRowByItem item: Any) -> CGFloat {
+        guard item is Context else {
+            return outlineView.rowHeight
+        }
+        return outlineView.rowHeight + 2
     }
 
     func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
@@ -207,9 +235,10 @@ final class ContextLibraryController: NSViewController, NSOutlineViewDataSource,
 
         let title = NSTextField(labelWithString: context.title)
         title.lineBreakMode = .byTruncatingTail
+        let contextTitleFont = NSFont.preferredFont(forTextStyle: .headline)
         title.font = context.id == currentContextId
-            ? NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)
-            : NSFont.systemFont(ofSize: NSFont.systemFontSize)
+            ? NSFont.systemFont(ofSize: contextTitleFont.pointSize, weight: .semibold)
+            : contextTitleFont
         rowView.addArrangedSubview(title)
         rowView.addArrangedSubview(makeBadgeLabel(text: "\(context.snapshotCount)"))
         if context.id == currentContextId {
@@ -234,6 +263,8 @@ final class ContextLibraryController: NSViewController, NSOutlineViewDataSource,
 
         let title = NSTextField(labelWithString: "\(snapshot.sequence). \(snapshot.title)")
         title.lineBreakMode = .byTruncatingTail
+        let baseSnapshotTitleFont = NSFont.preferredFont(forTextStyle: .subheadline)
+        title.font = NSFont.systemFont(ofSize: baseSnapshotTitleFont.pointSize + 1, weight: .regular)
         title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         rowView.addArrangedSubview(title)
 
@@ -257,46 +288,86 @@ final class ContextLibraryController: NSViewController, NSOutlineViewDataSource,
     }
 
     private func showSelectionDetails() {
+        let titleFont = NSFont.preferredFont(forTextStyle: .title2)
+        let bodyFont = NSFont.preferredFont(forTextStyle: .body)
         guard let selectedItem = outlineView.item(atRow: outlineView.selectedRow) else {
             detailTextView.string = "Select a context or snapshot."
             return
         }
         if let context = selectedItem as? Context {
-            detailTextView.string = [
-                context.id == currentContextId ? "Current Context" : "Context",
-                context.title,
-                "",
-                "Snapshots: \(context.snapshotCount)"
-            ].joined(separator: "\n")
+            let details = NSMutableAttributedString(
+                string: "\(context.title)\n",
+                attributes: [
+                    .font: titleFont,
+                    .foregroundColor: NSColor.labelColor
+                ]
+            )
+            let snapshots = (snapshotsByContextId[context.id] ?? []).sorted { $0.sequence < $1.sequence }
+            let bulletList = snapshots.isEmpty
+                ? "No snapshots yet."
+                : snapshots.map { "• \($0.title)" }.joined(separator: "\n")
+            details.append(
+                NSAttributedString(
+                    string: "\n\(bulletList)",
+                    attributes: [
+                        .font: bodyFont,
+                        .foregroundColor: NSColor.labelColor
+                    ]
+                )
+            )
+            if let textStorage = detailTextView.textStorage {
+                textStorage.setAttributedString(details)
+                return
+            }
+            detailTextView.string = details.string
             return
         }
         guard let snapshot = selectedItem as? Snapshot else {
             return
         }
-        var details = [
-            "Snapshot \(snapshot.sequence): \(snapshot.title)",
-            "App: \(snapshot.appName)",
-            "Window: \(snapshot.windowTitle)",
-            "Status: \(snapshot.status == .failed ? "Failed" : "Ready")",
-            "Retries: \(snapshot.retryCount)"
-        ]
-        if let lastAttemptAt = snapshot.lastAttemptAt {
-            details.append("Last Attempt: \(lastAttemptAt.formatted())")
-        }
+        let details = NSMutableAttributedString(
+            string: "\(snapshot.title)\n",
+            attributes: [
+                .font: titleFont,
+                .foregroundColor: NSColor.labelColor
+            ]
+        )
+        details.append(
+            NSAttributedString(
+                string: "App: \(snapshot.appName)\nWindow: \(snapshot.windowTitle)",
+                attributes: [
+                    .font: bodyFont,
+                    .foregroundColor: NSColor.labelColor
+                ]
+            )
+        )
         if snapshot.status == .failed, let failureMessage = snapshot.failureMessage, !failureMessage.isEmpty {
-            details.append("")
-            details.append("Failure")
-            details.append(failureMessage)
+            details.append(
+                NSAttributedString(
+                    string: "\n\nfailed: \(failureMessage)",
+                    attributes: [
+                        .font: bodyFont,
+                        .foregroundColor: NSColor.systemRed
+                    ]
+                )
+            )
         }
-        details.append(contentsOf: [
-            "",
-            "Dense Content",
-            snapshot.denseContent,
-            "",
-            "Raw Content",
-            snapshot.rawContent
-        ])
-        detailTextView.string = details.joined(separator: "\n")
+        if !snapshot.denseContent.isEmpty {
+            details.append(
+                NSAttributedString(
+                    string: "\n\n\(snapshot.denseContent)",
+                    attributes: [
+                        .font: bodyFont,
+                        .foregroundColor: NSColor.labelColor
+                    ]
+                )
+            )
+        }
+        if let textStorage = detailTextView.textStorage {
+            textStorage.setAttributedString(details)
+            return
+        }
+        detailTextView.string = details.string
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
@@ -663,7 +734,8 @@ final class ContextLibraryController: NSViewController, NSOutlineViewDataSource,
         backgroundColor: NSColor? = nil
     ) -> NSTextField {
         let label = NSTextField(labelWithString: text)
-        label.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        let badgeFont = NSFont.preferredFont(forTextStyle: .subheadline)
+        label.font = NSFont.systemFont(ofSize: badgeFont.pointSize, weight: .semibold)
         label.textColor = textColor ?? (emphasis ? NSColor.white : NSColor.secondaryLabelColor)
         label.wantsLayer = true
         label.layer?.cornerRadius = 8
@@ -677,7 +749,7 @@ final class ContextLibraryController: NSViewController, NSOutlineViewDataSource,
         label.setContentHuggingPriority(.required, for: .horizontal)
         label.setContentCompressionResistancePriority(.required, for: .horizontal)
         label.translatesAutoresizingMaskIntoConstraints = false
-        label.heightAnchor.constraint(equalToConstant: 16).isActive = true
+        label.heightAnchor.constraint(greaterThanOrEqualToConstant: ceil(badgeFont.pointSize + 6)).isActive = true
         label.widthAnchor.constraint(greaterThanOrEqualToConstant: text.count > 2 ? 28 : 20).isActive = true
         return label
     }
