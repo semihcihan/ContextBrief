@@ -28,7 +28,7 @@ public struct ProviderTextRequest {
     public let prompt: String
 
     public init(systemInstruction: String? = nil, prompt: String) {
-        self.systemInstruction = systemInstruction
+        self.systemInstruction = (systemInstruction ?? "") + "\n" + ProviderTextRequest.commonPrompt.joined(separator: "\n")
         self.prompt = prompt
     }
 }
@@ -464,7 +464,6 @@ private func requestData(
 private func densificationPrompt(for request: DensificationRequest) -> String {
     [
         "Extract essential context from captured UI text.",
-        ProviderTextRequest.commonPrompt.joined(separator: "\n"),
         "App: \(request.appName)",
         "Window: \(request.windowTitle)",
         "",
@@ -829,8 +828,7 @@ private func densificationChunkPrompt(
     [
         "Extract essential context from this captured snapshot chunk.",
         "Chunk \(chunkIndex) of \(totalChunks).",
-        ProviderTextRequest.commonPrompt.joined(separator: "\n"),
-        "Target length: <= \(densificationChunkTargetWordLimit) words.",
+        "Max length: \(densificationChunkTargetWordLimit) words.",
         "App: \(appName)",
         "Window: \(windowTitle)",
         "",
@@ -846,9 +844,8 @@ private func densificationMergePrompt(
 ) -> String {
     [
         "Merge these partial summaries into one coherent snapshot context.",
-        ProviderTextRequest.commonPrompt.joined(separator: "\n"),
         "Remove duplicates.",
-        "Target length: <= \(densificationMergeTargetWordLimit) words.",
+        "Max length: \(densificationMergeTargetWordLimit) words.",
         "App: \(appName)",
         "Window: \(windowTitle)",
         "",
