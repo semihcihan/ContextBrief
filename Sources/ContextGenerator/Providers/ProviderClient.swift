@@ -17,6 +17,13 @@ public struct DensificationRequest {
 }
 
 public struct ProviderTextRequest {
+    static let commonPrompt = [
+        "Keep meaningful facts, intent, actions, outcomes, constraints, and errors.",
+        "Remove low-signal UI noise such as nav labels, menu items, generic button text, repeated form labels, and boilerplate chrome.",
+        "Keep UI text only when it changes meaning (for example selected options, warnings, status, or action-specific labels).",
+        "Do not add assumptions.",
+        "Return dense plain text only.",
+    ]
     public let systemInstruction: String?
     public let prompt: String
 
@@ -456,12 +463,8 @@ private func requestData(
 
 private func densificationPrompt(for request: DensificationRequest) -> String {
     [
-        "You are extracting the essential context from captured UI text.",
-        "Keep meaningful facts, intent, actions, outcomes, constraints, and errors.",
-        "Remove low-signal UI noise such as nav labels, menu items, generic button text, repeated form labels, and boilerplate chrome.",
-        "Keep UI text only when it changes meaning (for example selected options, warnings, status, or action-specific labels).",
-        "Do not add assumptions.",
-        "Return dense plain text only.",
+        "Extract essential context from captured UI text.",
+        ProviderTextRequest.commonPrompt.joined(separator: "\n"),
         "App: \(request.appName)",
         "Window: \(request.windowTitle)",
         "",
@@ -824,11 +827,9 @@ private func densificationChunkPrompt(
     totalChunks: Int
 ) -> String {
     [
-        "Process this chunk from one captured snapshot.",
+        "Extract essential context from this captured snapshot chunk.",
         "Chunk \(chunkIndex) of \(totalChunks).",
-        "Keep facts, intent, actions, outcomes, constraints, and errors.",
-        "Remove low-signal UI chrome and duplicates.",
-        "Return dense plain text only.",
+        ProviderTextRequest.commonPrompt.joined(separator: "\n"),
         "Target length: <= \(densificationChunkTargetWordLimit) words.",
         "App: \(appName)",
         "Window: \(windowTitle)",
@@ -844,11 +845,9 @@ private func densificationMergePrompt(
     pass: Int
 ) -> String {
     [
-        "Merge these partial summaries into one complete snapshot context.",
-        "Pass \(pass).",
-        "Keep high-signal facts, intent, actions, outcomes, constraints, and errors.",
-        "Remove duplicates and contradictions.",
-        "Return dense plain text only.",
+        "Merge these partial summaries into one coherent snapshot context.",
+        ProviderTextRequest.commonPrompt.joined(separator: "\n"),
+        "Remove duplicates.",
         "Target length: <= \(densificationMergeTargetWordLimit) words.",
         "App: \(appName)",
         "Window: \(windowTitle)",
