@@ -1,10 +1,15 @@
 import Foundation
 
-struct AppleFoundationContextWindowPlanner {
+/// Plans chunk and merge group boundaries using token estimates.
+struct ContextWindowPlanner {
+    /// Maximum estimated input tokens allowed for each chunk request.
     private let maxChunkInputTokens: Int
+    /// Maximum estimated input tokens allowed for each merge request.
     private let maxMergeInputTokens: Int
+    /// Lower bound for chunk and merge budgets during adaptive retries.
     private let minimumChunkInputTokens: Int
 
+    /// Creates a planner with caller-provided chunk and merge token budgets.
     init(
         maxChunkInputTokens: Int = 1800,
         maxMergeInputTokens: Int = 2000,
@@ -15,10 +20,14 @@ struct AppleFoundationContextWindowPlanner {
         self.minimumChunkInputTokens = minimumChunkInputTokens
     }
 
+    /// Splits raw input text into chunk-sized sections under `maxChunkInputTokens`.
     func chunkInput(_ text: String) -> [String] {
         chunk(text: text, maxTokens: maxChunkInputTokens)
     }
 
+    /// Packs partial summaries into merge groups under `maxMergeInputTokens`.
+    ///
+    /// Oversized partials are split first so each returned group can be merged safely.
     func mergeGroups(for partials: [String]) -> [[String]] {
         let normalized = partials
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -58,10 +67,12 @@ struct AppleFoundationContextWindowPlanner {
         return groups
     }
 
+    /// Estimates token usage for text with the shared `TokenCountEstimator`.
     func estimatedTokenCount(for text: String) -> Int {
         TokenCountEstimator.estimate(for: text)
     }
 
+    /// Core chunking routine that builds sections from paragraphs.
     private func chunk(text: String, maxTokens: Int) -> [String] {
         let trimmed = text
             .replacingOccurrences(of: "\r\n", with: "\n")
@@ -103,6 +114,7 @@ struct AppleFoundationContextWindowPlanner {
         return chunks
     }
 
+    /// Splits an oversized paragraph by words, then by characters as last resort.
     private func splitOversizedSegment(_ segment: String, maxTokens: Int) -> [String] {
         let words = segment.split(whereSeparator: \.isWhitespace).map(String.init)
         guard !words.isEmpty else {
@@ -150,6 +162,7 @@ struct AppleFoundationContextWindowPlanner {
             .filter { !$0.isEmpty }
     }
 
+    /// Splits a single value into fixed-size character slices.
     private func splitByCharacterCount(_ value: String, maxCharacters: Int) -> [String] {
         guard maxCharacters > 0 else {
             return [value]
@@ -166,8 +179,13 @@ struct AppleFoundationContextWindowPlanner {
     }
 }
 
+/// Paragraph delimiter used when joining chunk sections.
 private let paragraphSeparator = "\n\n"
+/// Delimiter inserted between partials before merge token accounting.
 private let mergeSeparator = "\n\n---\n\n"
+/// Approximate latin-character density used for separator token estimates.
 private let latinCharactersPerToken = 3.0
+/// Estimated token cost of `paragraphSeparator`.
 private let paragraphSeparatorTokens = Int(ceil(Double(paragraphSeparator.count) / latinCharactersPerToken))
+/// Estimated token cost of `mergeSeparator`.
 private let mergeSeparatorTokens = Int(ceil(Double(mergeSeparator.count) / latinCharactersPerToken))

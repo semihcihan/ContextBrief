@@ -77,7 +77,7 @@ public extension ProviderClient {
                 request: request,
                 apiKey: apiKey,
                 model: model,
-                initialChunkInputTokens: reactiveContextWindowInitialChunkInputTokens,
+                contextWindowTokens: reactiveContextWindowTokenLimit,
                 stats: stats
             )
             AppLogger.debug(
@@ -90,6 +90,16 @@ public extension ProviderClient {
 
 private final class DensificationDebugStats {
     var runCount = 0
+}
+
+private struct DensificationBudgetPlan {
+    let contextWindowTokens: Int
+    let chunkInputTokens: Int
+    let initialMergeInputTokens: Int
+    let chunkTargetWordLimit: Int
+    let mergeTargetWordLimit: Int
+    let outputReserveTokens: Int
+    let safetyMarginTokens: Int
 }
 
 private extension ProviderClient {
@@ -105,21 +115,105 @@ private extension ProviderClient {
         }
     }
 
+    func initialChunkInputBudget(
+        request: DensificationRequest,
+        contextWindowTokens: Int
+    ) -> Int {
+        makeDensificationBudgetPlan(
+            request: request,
+            contextWindowTokens: contextWindowTokens,
+            requestedChunkInputTokens: contextWindowTokens
+        ).chunkInputTokens
+    }
+
+    func makeDensificationBudgetPlan(
+        request: DensificationRequest,
+        contextWindowTokens: Int,
+        requestedChunkInputTokens: Int
+    ) -> DensificationBudgetPlan {
+        let outputReserveTokens = densificationOutputReserveTokens(for: contextWindowTokens)
+        let safetyMarginTokens = densificationSafetyMarginTokens(for: contextWindowTokens)
+        let chunkPromptOverheadTokens = TokenCountEstimator.estimate(
+            for: densificationChunkPrompt(
+                inputText: "",
+                appName: request.appName,
+                windowTitle: request.windowTitle,
+                chunkIndex: 1,
+                totalChunks: 1,
+                targetWordLimit: densificationPromptTargetWordLimitPlaceholder
+            )
+        )
+        let availableChunkTokens = max(
+            densificationMinimumChunkInputTokens,
+            contextWindowTokens
+                - densificationSystemInstructionTokenCount
+                - chunkPromptOverheadTokens
+                - outputReserveTokens
+                - safetyMarginTokens
+        )
+        let dynamicChunkInputTokens = max(
+            densificationMinimumChunkInputTokens,
+            Int(Double(availableChunkTokens) * densificationInputUtilizationRatio(for: contextWindowTokens))
+        )
+        let chunkInputTokens = max(
+            densificationMinimumChunkInputTokens,
+            min(requestedChunkInputTokens, dynamicChunkInputTokens)
+        )
+        let mergePromptOverheadTokens = TokenCountEstimator.estimate(
+            for: densificationMergePrompt(
+                partials: [""],
+                appName: request.appName,
+                windowTitle: request.windowTitle,
+                pass: 1,
+                targetWordLimit: densificationPromptTargetWordLimitPlaceholder
+            )
+        )
+        let availableMergeTokens = max(
+            densificationMinimumChunkInputTokens,
+            contextWindowTokens
+                - densificationSystemInstructionTokenCount
+                - mergePromptOverheadTokens
+                - outputReserveTokens
+                - safetyMarginTokens
+        )
+        let initialMergeInputTokens = max(
+            densificationMinimumChunkInputTokens,
+            min(chunkInputTokens, availableMergeTokens)
+        )
+        return DensificationBudgetPlan(
+            contextWindowTokens: contextWindowTokens,
+            chunkInputTokens: chunkInputTokens,
+            initialMergeInputTokens: initialMergeInputTokens,
+            chunkTargetWordLimit: densificationChunkTargetWordLimit(for: chunkInputTokens),
+            mergeTargetWordLimit: densificationMergeTargetWordLimit(for: initialMergeInputTokens),
+            outputReserveTokens: outputReserveTokens,
+            safetyMarginTokens: safetyMarginTokens
+        )
+    }
+
     func densifyWithAdaptiveChunking(
         request: DensificationRequest,
         apiKey: String,
         model: String,
-        initialChunkInputTokens: Int,
+        contextWindowTokens: Int,
         stats: DensificationDebugStats
     ) async throws -> String {
-        var chunkInputTokens = max(densificationMinimumChunkInputTokens, initialChunkInputTokens)
+        var chunkInputTokens = initialChunkInputBudget(
+            request: request,
+            contextWindowTokens: contextWindowTokens
+        )
         while true {
+            let budgetPlan = makeDensificationBudgetPlan(
+                request: request,
+                contextWindowTokens: contextWindowTokens,
+                requestedChunkInputTokens: chunkInputTokens
+            )
             do {
                 return try await densifyInChunks(
                     request: request,
                     apiKey: apiKey,
                     model: model,
-                    chunkInputTokens: chunkInputTokens,
+                    budgetPlan: budgetPlan,
                     stats: stats
                 )
             } catch {
@@ -131,7 +225,7 @@ private extension ProviderClient {
                     throw error
                 }
                 AppLogger.debug(
-                    "Densification exceeded context window. Retrying with smaller chunk budget [provider=\(provider.rawValue) previous=\(chunkInputTokens) next=\(nextChunkInputTokens)]"
+                    "Densification exceeded context window. Retrying with smaller chunk budget [provider=\(provider.rawValue) contextWindowTokens=\(contextWindowTokens) previousChunkInputTokens=\(chunkInputTokens) nextChunkInputTokens=\(nextChunkInputTokens)]"
                 )
                 chunkInputTokens = nextChunkInputTokens
             }
@@ -142,15 +236,12 @@ private extension ProviderClient {
         request: DensificationRequest,
         apiKey: String,
         model: String,
-        chunkInputTokens: Int,
+        budgetPlan: DensificationBudgetPlan,
         stats: DensificationDebugStats
     ) async throws -> String {
-        let planner = AppleFoundationContextWindowPlanner(
-            maxChunkInputTokens: chunkInputTokens,
-            maxMergeInputTokens: max(
-                densificationMinimumChunkInputTokens,
-                min(chunkInputTokens, densificationDefaultMergeInputTokens)
-            ),
+        let planner = ContextWindowPlanner(
+            maxChunkInputTokens: budgetPlan.chunkInputTokens,
+            maxMergeInputTokens: budgetPlan.initialMergeInputTokens,
             minimumChunkInputTokens: densificationMinimumChunkInputTokens
         )
         let chunks = planner.chunkInput(request.inputText)
@@ -162,7 +253,7 @@ private extension ProviderClient {
             min(providerWorkLimit(for: provider), chunks.count)
         )
         AppLogger.debug(
-            "Densification chunk plan [provider=\(provider.rawValue) chunkInputTokens=\(chunkInputTokens) mergeInputTokens=\(max(densificationMinimumChunkInputTokens, min(chunkInputTokens, densificationDefaultMergeInputTokens))) inputEstimatedTokens=\(planner.estimatedTokenCount(for: request.inputText)) chunks=\(chunks.count) parallel=\(maxParallelRuns)]"
+            "Densification chunk plan [provider=\(provider.rawValue) contextWindowTokens=\(budgetPlan.contextWindowTokens) chunkInputTokens=\(budgetPlan.chunkInputTokens) mergeInputTokens=\(budgetPlan.initialMergeInputTokens) outputReserveTokens=\(budgetPlan.outputReserveTokens) safetyMarginTokens=\(budgetPlan.safetyMarginTokens) chunkTargetWords=\(budgetPlan.chunkTargetWordLimit) mergeTargetWords=\(budgetPlan.mergeTargetWordLimit) inputEstimatedTokens=\(planner.estimatedTokenCount(for: request.inputText)) chunks=\(chunks.count) parallel=\(maxParallelRuns)]"
         )
 
         let chunkRuns = chunks.enumerated().map { index, chunk in
@@ -171,7 +262,8 @@ private extension ProviderClient {
                 appName: request.appName,
                 windowTitle: request.windowTitle,
                 chunkIndex: index + 1,
-                totalChunks: chunks.count
+                totalChunks: chunks.count,
+                targetWordLimit: budgetPlan.chunkTargetWordLimit
             )
             stats.runCount += 1
             return (
@@ -215,7 +307,72 @@ private extension ProviderClient {
             }
             return outputs
         }
+        return try await mergePartialsWithAdaptiveBudget(
+            partials: partials,
+            request: request,
+            apiKey: apiKey,
+            model: model,
+            chunkInputTokens: budgetPlan.chunkInputTokens,
+            initialMergeInputTokens: budgetPlan.initialMergeInputTokens,
+            mergeTargetWordLimit: budgetPlan.mergeTargetWordLimit,
+            stats: stats
+        )
+    }
 
+    func mergePartialsWithAdaptiveBudget(
+        partials: [String],
+        request: DensificationRequest,
+        apiKey: String,
+        model: String,
+        chunkInputTokens: Int,
+        initialMergeInputTokens: Int,
+        mergeTargetWordLimit: Int,
+        stats: DensificationDebugStats
+    ) async throws -> String {
+        var mergeInputTokens = max(densificationMinimumChunkInputTokens, initialMergeInputTokens)
+        while true {
+            do {
+                return try await mergePartials(
+                    partials: partials,
+                    request: request,
+                    apiKey: apiKey,
+                    model: model,
+                    chunkInputTokens: chunkInputTokens,
+                    mergeInputTokens: mergeInputTokens,
+                    mergeTargetWordLimit: mergeTargetWordLimit,
+                    stats: stats
+                )
+            } catch {
+                guard isContextWindowExceededError(error), mergeInputTokens > densificationMinimumChunkInputTokens else {
+                    throw error
+                }
+                let nextMergeInputTokens = max(densificationMinimumChunkInputTokens, mergeInputTokens / 2)
+                guard nextMergeInputTokens < mergeInputTokens else {
+                    throw error
+                }
+                AppLogger.debug(
+                    "Densification merge exceeded context window. Retrying merge-only with smaller budget [provider=\(provider.rawValue) chunkInputTokens=\(chunkInputTokens) previousMergeInputTokens=\(mergeInputTokens) nextMergeInputTokens=\(nextMergeInputTokens)]"
+                )
+                mergeInputTokens = nextMergeInputTokens
+            }
+        }
+    }
+
+    func mergePartials(
+        partials: [String],
+        request: DensificationRequest,
+        apiKey: String,
+        model: String,
+        chunkInputTokens: Int,
+        mergeInputTokens: Int,
+        mergeTargetWordLimit: Int,
+        stats: DensificationDebugStats
+    ) async throws -> String {
+        let planner = ContextWindowPlanner(
+            maxChunkInputTokens: chunkInputTokens,
+            maxMergeInputTokens: mergeInputTokens,
+            minimumChunkInputTokens: densificationMinimumChunkInputTokens
+        )
         var mergedPartials = partials
         var pass = 1
         while mergedPartials.count > 1 {
@@ -225,11 +382,11 @@ private extension ProviderClient {
                 min(providerWorkLimit(for: provider), mergeGroups.count)
             )
             AppLogger.debug(
-                "Densification merge pass planned [provider=\(provider.rawValue) pass=\(pass) inputPartials=\(mergedPartials.count) groups=\(mergeGroups.count) parallel=\(mergeParallelism)]"
+                "Densification merge pass planned [provider=\(provider.rawValue) pass=\(pass) mergeInputTokens=\(mergeInputTokens) inputPartials=\(mergedPartials.count) groups=\(mergeGroups.count) parallel=\(mergeParallelism)]"
             )
             if mergeGroups.count == mergedPartials.count, mergeGroups.allSatisfy({ $0.count == 1 }) {
                 AppLogger.debug(
-                    "Densification merge pass not reducing [provider=\(provider.rawValue) pass=\(pass) inputPartials=\(mergedPartials.count)]"
+                    "Densification merge pass not reducing [provider=\(provider.rawValue) pass=\(pass) mergeInputTokens=\(mergeInputTokens) inputPartials=\(mergedPartials.count)]"
                 )
                 return mergedPartials.joined(separator: "\n\n")
             }
@@ -239,7 +396,8 @@ private extension ProviderClient {
                     partials: mergeGroup,
                     appName: request.appName,
                     windowTitle: request.windowTitle,
-                    pass: pass
+                    pass: pass,
+                    targetWordLimit: mergeTargetWordLimit
                 )
                 stats.runCount += 1
                 return (
@@ -268,7 +426,7 @@ private extension ProviderClient {
                             model: model
                         )
                         AppLogger.debug(
-                            "Densification merge run completed [provider=\(provider.rawValue) run=\(mergeRun.run) pass=\(pass) group=\(mergeRun.groupIndex + 1)/\(mergeGroups.count) groupPartials=\(mergeRun.groupPartials) promptEstimatedTokens=\(planner.estimatedTokenCount(for: mergeRun.prompt)) outputEstimatedTokens=\(planner.estimatedTokenCount(for: mergedOutput)) seconds=\(formattedElapsedSeconds(since: mergeStartedAt))]"
+                            "Densification merge run completed [provider=\(provider.rawValue) run=\(mergeRun.run) pass=\(pass) mergeInputTokens=\(mergeInputTokens) group=\(mergeRun.groupIndex + 1)/\(mergeGroups.count) groupPartials=\(mergeRun.groupPartials) promptEstimatedTokens=\(planner.estimatedTokenCount(for: mergeRun.prompt)) outputEstimatedTokens=\(planner.estimatedTokenCount(for: mergedOutput)) seconds=\(formattedElapsedSeconds(since: mergeStartedAt))]"
                         )
                         return (mergeRun.groupIndex, mergedOutput)
                     }
@@ -285,7 +443,7 @@ private extension ProviderClient {
                 return outputs
             }
             AppLogger.debug(
-                "Densification merge pass completed [provider=\(provider.rawValue) pass=\(pass) outputPartials=\(reducedPartials.count)]"
+                "Densification merge pass completed [provider=\(provider.rawValue) pass=\(pass) mergeInputTokens=\(mergeInputTokens) outputPartials=\(reducedPartials.count)]"
             )
             mergedPartials = reducedPartials
             pass += 1
@@ -314,13 +472,66 @@ private let providerRequestTimeoutSeconds: TimeInterval = 60
 private let localDebugResponseDelayNanoseconds: UInt64 = 3_000_000_000
 private let localDebugDensificationCharacterLimit = 200
 private let densificationSystemInstruction = "You produce concise, complete context with no missing key information."
-private let appleProactiveInitialChunkInputTokens = 1800
 private let densificationMinimumChunkInputTokens = 320
-private let reactiveContextWindowInitialChunkInputTokens = 100_000
-private let densificationDefaultMergeInputTokens = 2_000
-private let densificationChunkTargetWordLimit = 180
-private let densificationMergeTargetWordLimit = 260
+private let appleContextWindowTokenLimit = 4_096
+private let reactiveContextWindowTokenLimit = 100_000
+private let densificationPromptTargetWordLimitPlaceholder = 260
+private let densificationOutputReserveRatio = 0.24
+private let densificationMinimumOutputReserveTokens = 280
+private let densificationMaximumOutputReserveTokens = 2_400
+private let densificationSafetyMarginRatio = 0.10
+private let densificationMinimumSafetyMarginTokens = 120
+private let densificationMaximumSafetyMarginTokens = 3_200
+private let densificationSmallContextInputUtilizationRatio = 0.62
+private let densificationLargeContextInputUtilizationRatio = 0.88
+private let densificationChunkWordsPerInputToken = 0.16
+private let densificationMergeWordsPerInputToken = 0.18
+private let densificationMinimumChunkTargetWordLimit = 120
+private let densificationMaximumChunkTargetWordLimit = 420
+private let densificationMinimumMergeTargetWordLimit = 160
+private let densificationMaximumMergeTargetWordLimit = 520
+private let densificationSystemInstructionTokenCount = TokenCountEstimator.estimate(
+    for: ProviderTextRequest(systemInstruction: densificationSystemInstruction, prompt: "").systemInstruction ?? ""
+)
 private let appleContextWindowExceededMessage = "Context Window Size Exceeded. Apple Foundation Models allow up to 4,096 tokens per session (including instructions, input, and output). Start a new session and retry with shorter input or output."
+
+private func densificationOutputReserveTokens(for contextWindowTokens: Int) -> Int {
+    let ratioBased = Int(Double(contextWindowTokens) * densificationOutputReserveRatio)
+    return min(
+        densificationMaximumOutputReserveTokens,
+        max(densificationMinimumOutputReserveTokens, ratioBased)
+    )
+}
+
+private func densificationSafetyMarginTokens(for contextWindowTokens: Int) -> Int {
+    let ratioBased = Int(Double(contextWindowTokens) * densificationSafetyMarginRatio)
+    return min(
+        densificationMaximumSafetyMarginTokens,
+        max(densificationMinimumSafetyMarginTokens, ratioBased)
+    )
+}
+
+private func densificationInputUtilizationRatio(for contextWindowTokens: Int) -> Double {
+    contextWindowTokens <= appleContextWindowTokenLimit
+        ? densificationSmallContextInputUtilizationRatio
+        : densificationLargeContextInputUtilizationRatio
+}
+
+private func densificationChunkTargetWordLimit(for chunkInputTokens: Int) -> Int {
+    let dynamicLimit = Int(Double(chunkInputTokens) * densificationChunkWordsPerInputToken)
+    return min(
+        densificationMaximumChunkTargetWordLimit,
+        max(densificationMinimumChunkTargetWordLimit, dynamicLimit)
+    )
+}
+
+private func densificationMergeTargetWordLimit(for mergeInputTokens: Int) -> Int {
+    let dynamicLimit = Int(Double(mergeInputTokens) * densificationMergeWordsPerInputToken)
+    return min(
+        densificationMaximumMergeTargetWordLimit,
+        max(densificationMinimumMergeTargetWordLimit, dynamicLimit)
+    )
+}
 
 private func providerWorkLimit(for provider: ProviderName) -> Int {
     DevelopmentConfig.shared.providerParallelWorkLimit(for: provider)
@@ -751,7 +962,7 @@ private struct AppleFoundationProviderClient: ProviderClient {
                 request: request,
                 apiKey: apiKey,
                 model: model,
-                initialChunkInputTokens: appleProactiveInitialChunkInputTokens,
+                contextWindowTokens: appleContextWindowTokenLimit,
                 stats: stats
             )
             AppLogger.debug(
@@ -823,12 +1034,13 @@ private func densificationChunkPrompt(
     appName: String,
     windowTitle: String,
     chunkIndex: Int,
-    totalChunks: Int
+    totalChunks: Int,
+    targetWordLimit: Int
 ) -> String {
     [
         "Extract essential context from this captured snapshot chunk.",
         "Chunk \(chunkIndex) of \(totalChunks).",
-        "Max length: \(densificationChunkTargetWordLimit) words.",
+        "Max length: \(targetWordLimit) words.",
         "App: \(appName)",
         "Window: \(windowTitle)",
         "",
@@ -840,12 +1052,13 @@ private func densificationMergePrompt(
     partials: [String],
     appName: String,
     windowTitle: String,
-    pass: Int
+    pass: Int,
+    targetWordLimit: Int
 ) -> String {
     [
         "Merge these partial summaries into one coherent snapshot context.",
         "Remove duplicates.",
-        "Max length: \(densificationMergeTargetWordLimit) words.",
+        "Max length: \(targetWordLimit) words.",
         "App: \(appName)",
         "Window: \(windowTitle)",
         "",

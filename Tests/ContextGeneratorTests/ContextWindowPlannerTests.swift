@@ -1,9 +1,9 @@
 @testable import ContextGenerator
 import XCTest
 
-final class AppleFoundationContextWindowPlannerTests: XCTestCase {
+final class ContextWindowPlannerTests: XCTestCase {
     func testEstimatedTokenCountTreatsCJKAsDenserThanLatin() {
-        let planner = AppleFoundationContextWindowPlanner()
+        let planner = ContextWindowPlanner()
         let latinText = String(repeating: "a", count: 300)
         let cjkText = String(repeating: "你", count: 300)
 
@@ -14,7 +14,7 @@ final class AppleFoundationContextWindowPlannerTests: XCTestCase {
     }
 
     func testChunkInputSplitsLargeTextIntoMultipleChunks() {
-        let planner = AppleFoundationContextWindowPlanner()
+        let planner = ContextWindowPlanner()
         let longText = Array(repeating: String(repeating: "alpha beta gamma ", count: 120), count: 14)
             .joined(separator: "\n\n")
 
@@ -26,7 +26,7 @@ final class AppleFoundationContextWindowPlannerTests: XCTestCase {
     }
 
     func testMergeGroupsStayInsideMergeBudget() {
-        let planner = AppleFoundationContextWindowPlanner()
+        let planner = ContextWindowPlanner()
         let partials = (1 ... 18).map { index in
             "Chunk \(index): " + String(repeating: "important context text ", count: 90)
         }
