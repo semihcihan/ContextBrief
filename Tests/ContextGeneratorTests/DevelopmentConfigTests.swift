@@ -16,6 +16,7 @@ final class DevelopmentConfigTests: XCTestCase {
         XCTAssertEqual(config.providerParallelWorkLimitDefault, 10)
         XCTAssertEqual(config.providerParallelWorkLimit(for: .apple), 10)
         XCTAssertEqual(config.providerParallelWorkLimit(for: .openai), 10)
+        XCTAssertNil(config.snapshotInactivityPromptMinutes)
         XCTAssertFalse(config.appleFoundationProviderEnabled)
     }
 
@@ -27,7 +28,8 @@ final class DevelopmentConfigTests: XCTestCase {
             "forcedProviderFailureChance": 0.4,
             "providerParallelWorkLimitDefault": 8,
             "providerParallelWorkLimitApple": 3,
-            "providerParallelWorkLimitOpenAI": 12
+            "providerParallelWorkLimitOpenAI": 12,
+            "snapshotInactivityPromptMinutes": 30
         ])
         let config = DevelopmentConfig(plistURL: plistURL, appleFoundationAvailableOverride: true)
 
@@ -43,6 +45,7 @@ final class DevelopmentConfigTests: XCTestCase {
         XCTAssertEqual(config.providerParallelWorkLimit(for: .apple), 3)
         XCTAssertEqual(config.providerParallelWorkLimit(for: .openai), 12)
         XCTAssertEqual(config.providerParallelWorkLimit(for: .anthropic), 8)
+        XCTAssertEqual(config.snapshotInactivityPromptMinutes, 30)
     }
 
     func testRoutingUsesSelectedProviderWithoutImplicitAppleOverrides() {
@@ -99,6 +102,20 @@ final class DevelopmentConfigTests: XCTestCase {
         XCTAssertEqual(config.providerParallelWorkLimit(for: .openai), 1)
         XCTAssertEqual(config.providerParallelWorkLimit(for: .anthropic), 6)
         XCTAssertEqual(config.providerParallelWorkLimit(for: .gemini), 1)
+    }
+
+    func testSnapshotInactivityPromptMinutesIsOptionalAndClamped() {
+        let missingURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("missing.plist")
+        let missingValueConfig = DevelopmentConfig(plistURL: missingURL)
+        XCTAssertNil(missingValueConfig.snapshotInactivityPromptMinutes)
+
+        let clampedConfig = DevelopmentConfig(
+            snapshotInactivityPromptMinutes: 0,
+            plistURL: missingURL
+        )
+        XCTAssertEqual(clampedConfig.snapshotInactivityPromptMinutes, 1)
     }
 
     func testLocalDebugFlagCanDisableCredentialRequirements() {

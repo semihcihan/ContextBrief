@@ -48,6 +48,20 @@ public final class ContextSessionManager {
         try repository.snapshots(in: currentContext().id)
     }
 
+    public func shouldPromptForNewContext(afterInactivityMinutes minutes: Int) throws -> Bool {
+        guard minutes > 0 else {
+            return false
+        }
+        guard
+            let context = try currentContextIfExists(),
+            let lastSnapshot = try repository.lastSnapshot(in: context.id)
+        else {
+            return false
+        }
+        let inactivityThreshold = TimeInterval(minutes * 60)
+        return Date().timeIntervalSince(lastSnapshot.createdAt) >= inactivityThreshold
+    }
+
     public func appendSnapshot(
         rawCapture: CapturedSnapshot,
         denseContent: String,

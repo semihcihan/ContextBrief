@@ -25,6 +25,7 @@ public struct DevelopmentConfig {
     public let providerParallelWorkLimitOpenAI: Int?
     public let providerParallelWorkLimitAnthropic: Int?
     public let providerParallelWorkLimitGemini: Int?
+    public let snapshotInactivityPromptMinutes: Int?
 
     public init(
         enableLocalDebugProvider: Bool? = nil,
@@ -36,6 +37,7 @@ public struct DevelopmentConfig {
         providerParallelWorkLimitOpenAI: Int? = nil,
         providerParallelWorkLimitAnthropic: Int? = nil,
         providerParallelWorkLimitGemini: Int? = nil,
+        snapshotInactivityPromptMinutes: Int? = nil,
         plistURL: URL? = nil,
         appleFoundationAvailableOverride: Bool? = nil
     ) {
@@ -88,6 +90,10 @@ public struct DevelopmentConfig {
         self.providerParallelWorkLimitGemini = Self.normalizedParallelWorkLimit(
             providerParallelWorkLimitGemini
                 ?? fileOverrides.providerParallelWorkLimitGemini
+        )
+        self.snapshotInactivityPromptMinutes = Self.normalizedInactivityPromptMinutes(
+            snapshotInactivityPromptMinutes
+                ?? fileOverrides.snapshotInactivityPromptMinutes
         )
     }
 
@@ -174,6 +180,13 @@ public struct DevelopmentConfig {
         }
         return max(1, value)
     }
+
+    private static func normalizedInactivityPromptMinutes(_ value: Int?) -> Int? {
+        guard let value else {
+            return nil
+        }
+        return max(1, value)
+    }
 }
 
 private struct FileOverrides {
@@ -186,6 +199,7 @@ private struct FileOverrides {
     let providerParallelWorkLimitOpenAI: Int?
     let providerParallelWorkLimitAnthropic: Int?
     let providerParallelWorkLimitGemini: Int?
+    let snapshotInactivityPromptMinutes: Int?
 
     static let empty = FileOverrides(
         enableLocalDebugProvider: nil,
@@ -196,7 +210,8 @@ private struct FileOverrides {
         providerParallelWorkLimitApple: nil,
         providerParallelWorkLimitOpenAI: nil,
         providerParallelWorkLimitAnthropic: nil,
-        providerParallelWorkLimitGemini: nil
+        providerParallelWorkLimitGemini: nil,
+        snapshotInactivityPromptMinutes: nil
     )
 
     init(
@@ -208,7 +223,8 @@ private struct FileOverrides {
         providerParallelWorkLimitApple: Int?,
         providerParallelWorkLimitOpenAI: Int?,
         providerParallelWorkLimitAnthropic: Int?,
-        providerParallelWorkLimitGemini: Int?
+        providerParallelWorkLimitGemini: Int?,
+        snapshotInactivityPromptMinutes: Int?
     ) {
         self.enableLocalDebugProvider = enableLocalDebugProvider
         self.thirdPartyContextTitleRefreshEvery = thirdPartyContextTitleRefreshEvery
@@ -219,6 +235,7 @@ private struct FileOverrides {
         self.providerParallelWorkLimitOpenAI = providerParallelWorkLimitOpenAI
         self.providerParallelWorkLimitAnthropic = providerParallelWorkLimitAnthropic
         self.providerParallelWorkLimitGemini = providerParallelWorkLimitGemini
+        self.snapshotInactivityPromptMinutes = snapshotInactivityPromptMinutes
     }
 
     init(dictionary: [String: Any]) {
@@ -231,6 +248,7 @@ private struct FileOverrides {
         providerParallelWorkLimitOpenAI = dictionary["providerParallelWorkLimitOpenAI"] as? Int
         providerParallelWorkLimitAnthropic = dictionary["providerParallelWorkLimitAnthropic"] as? Int
         providerParallelWorkLimitGemini = dictionary["providerParallelWorkLimitGemini"] as? Int
+        snapshotInactivityPromptMinutes = dictionary["snapshotInactivityPromptMinutes"] as? Int
     }
 }
 
