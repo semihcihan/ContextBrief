@@ -343,6 +343,34 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
             refreshMenuState()
             return
         }
+        do {
+            if
+                !isAnyProcessing,
+                let inactivityPromptMinutes = DevelopmentConfig.shared.snapshotInactivityPromptMinutes,
+                try sessionManager.shouldPromptForNewContext(afterInactivityMinutes: inactivityPromptMinutes)
+            {
+                let alert = NSAlert()
+                alert.messageText = "Start a new context?"
+                alert.informativeText = "It has been more than \(inactivityPromptMinutes) minutes since the last snapshot. Save this snapshot to a new context or keep it in the current context."
+                alert.alertStyle = .informational
+                alert.addButton(withTitle: "Save to New Context")
+                alert.addButton(withTitle: "Save to Current Context")
+                if alert.runModal() == .alertFirstButtonReturn {
+                    let context = try sessionManager.createNewContext(title: "New Context")
+                    AppLogger.debug(
+                        "captureContext inactivity prompt created new context contextId=\(context.id.uuidString) source=\(source)"
+                    )
+                }
+            }
+        } catch {
+            reportUnexpectedNonFatal(error, context: "capture_context_inactivity_prompt")
+            AppLogger.error(
+                "captureContext inactivity prompt handling failed source=\(source) error=\(error.localizedDescription)"
+            )
+            updateFeedback("Could not create a new context")
+            refreshMenuState()
+            return
+        }
         snapshotProcessingCoordinator.requestCapture(source: source)
     }
 

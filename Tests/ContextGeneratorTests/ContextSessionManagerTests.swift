@@ -332,6 +332,57 @@ final class ContextSessionManagerTests: XCTestCase {
         XCTAssertTrue(try repo.context(id: saved.contextId) != nil)
     }
 
+    func testShouldPromptForNewContextReturnsFalseWithoutSnapshots() throws {
+        let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let repo = ContextRepository(rootURL: tempRoot)
+        let manager = ContextSessionManager(repository: repo)
+        _ = try manager.createNewContext(title: "Context")
+
+        XCTAssertFalse(try manager.shouldPromptForNewContext(afterInactivityMinutes: 30))
+    }
+
+    func testShouldPromptForNewContextReturnsFalseForNonPositiveThreshold() throws {
+        let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let repo = ContextRepository(rootURL: tempRoot)
+        let manager = ContextSessionManager(repository: repo)
+        let context = try manager.createNewContext(title: "Context")
+        try repo.appendSnapshot(
+            storedSnapshot(
+                contextId: context.id,
+                sequence: 1,
+                createdAt: Date().addingTimeInterval(-3600)
+            )
+        )
+
+        XCTAssertFalse(try manager.shouldPromptForNewContext(afterInactivityMinutes: 0))
+        XCTAssertFalse(try manager.shouldPromptForNewContext(afterInactivityMinutes: -5))
+    }
+
+    func testShouldPromptForNewContextUsesLatestSnapshotTimestamp() throws {
+        let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let repo = ContextRepository(rootURL: tempRoot)
+        let manager = ContextSessionManager(repository: repo)
+        let context = try manager.createNewContext(title: "Context")
+
+        try repo.appendSnapshot(
+            storedSnapshot(
+                contextId: context.id,
+                sequence: 1,
+                createdAt: Date().addingTimeInterval(-31 * 60)
+            )
+        )
+        XCTAssertTrue(try manager.shouldPromptForNewContext(afterInactivityMinutes: 30))
+
+        try repo.appendSnapshot(
+            storedSnapshot(
+                contextId: context.id,
+                sequence: 2,
+                createdAt: Date().addingTimeInterval(-5 * 60)
+            )
+        )
+        XCTAssertFalse(try manager.shouldPromptForNewContext(afterInactivityMinutes: 30))
+    }
+
     private func sampleCapture() -> CapturedSnapshot {
         CapturedSnapshot(
             sourceType: .desktopApp,
@@ -348,6 +399,22 @@ final class ContextSessionManagerTests: XCTestCase {
                 processingDurationMs: 40,
                 usedFallbackOCR: false
             )
+        )
+    }
+
+    private func storedSnapshot(contextId: UUID, sequence: Int, createdAt: Date) -> Snapshot {
+        Snapshot(
+            contextId: contextId,
+            createdAt: createdAt,
+            sequence: sequence,
+            sourceType: .desktopApp,
+            appName: "Notes",
+            bundleIdentifier: "com.apple.Notes",
+            windowTitle: "Notes",
+            captureMethod: .accessibility,
+            rawContent: "abc",
+            ocrContent: "",
+            denseContent: "dense"
         )
     }
 }

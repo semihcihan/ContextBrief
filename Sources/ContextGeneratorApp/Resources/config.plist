@@ -12,5 +12,7 @@
     <real>0</real>
     <key>providerParallelWorkLimitDefault</key>
     <integer>10</integer>
+    <key>snapshotInactivityPromptMinutes</key>
+    <integer>30</integer>
 </dict>
 </plist>
