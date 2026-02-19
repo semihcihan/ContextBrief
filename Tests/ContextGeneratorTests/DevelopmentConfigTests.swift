@@ -13,6 +13,9 @@ final class DevelopmentConfigTests: XCTestCase {
         XCTAssertEqual(config.thirdPartyContextTitleRefreshEvery, 3)
         XCTAssertEqual(config.appleContextTitleRefreshEvery, 6)
         XCTAssertEqual(config.forcedProviderFailureChance, 0)
+        XCTAssertEqual(config.providerParallelWorkLimitDefault, 10)
+        XCTAssertEqual(config.providerParallelWorkLimit(for: .apple), 10)
+        XCTAssertEqual(config.providerParallelWorkLimit(for: .openai), 10)
         XCTAssertFalse(config.appleFoundationProviderEnabled)
     }
 
@@ -21,7 +24,10 @@ final class DevelopmentConfigTests: XCTestCase {
             "enableLocalDebugProvider": true,
             "thirdPartyContextTitleRefreshEvery": 5,
             "appleContextTitleRefreshEvery": 2,
-            "forcedProviderFailureChance": 0.4
+            "forcedProviderFailureChance": 0.4,
+            "providerParallelWorkLimitDefault": 8,
+            "providerParallelWorkLimitApple": 3,
+            "providerParallelWorkLimitOpenAI": 12
         ])
         let config = DevelopmentConfig(plistURL: plistURL, appleFoundationAvailableOverride: true)
 
@@ -33,6 +39,10 @@ final class DevelopmentConfigTests: XCTestCase {
 #else
         XCTAssertEqual(config.forcedProviderFailureChance, 0)
 #endif
+        XCTAssertEqual(config.providerParallelWorkLimitDefault, 8)
+        XCTAssertEqual(config.providerParallelWorkLimit(for: .apple), 3)
+        XCTAssertEqual(config.providerParallelWorkLimit(for: .openai), 12)
+        XCTAssertEqual(config.providerParallelWorkLimit(for: .anthropic), 8)
     }
 
     func testRoutingUsesSelectedProviderWithoutImplicitAppleOverrides() {
@@ -75,6 +85,20 @@ final class DevelopmentConfigTests: XCTestCase {
         XCTAssertEqual(lowChance.forcedProviderFailureChance, 0)
         XCTAssertEqual(highChance.forcedProviderFailureChance, 0)
 #endif
+    }
+
+    func testProviderParallelLimitFallbackAndClamping() {
+        let config = DevelopmentConfig(
+            providerParallelWorkLimitDefault: 0,
+            providerParallelWorkLimitApple: -4,
+            providerParallelWorkLimitOpenAI: 0,
+            providerParallelWorkLimitAnthropic: 6
+        )
+        XCTAssertEqual(config.providerParallelWorkLimitDefault, 1)
+        XCTAssertEqual(config.providerParallelWorkLimit(for: .apple), 1)
+        XCTAssertEqual(config.providerParallelWorkLimit(for: .openai), 1)
+        XCTAssertEqual(config.providerParallelWorkLimit(for: .anthropic), 6)
+        XCTAssertEqual(config.providerParallelWorkLimit(for: .gemini), 1)
     }
 
     func testLocalDebugFlagCanDisableCredentialRequirements() {

@@ -152,7 +152,7 @@ private extension ProviderClient {
         }
         let maxParallelRuns = max(
             1,
-            min(densificationParallelRequestLimit(for: provider), chunks.count)
+            min(providerWorkLimit(for: provider), chunks.count)
         )
         AppLogger.debug(
             "Densification chunk plan [provider=\(provider.rawValue) chunkInputTokens=\(chunkInputTokens) mergeInputTokens=\(max(densificationMinimumChunkInputTokens, min(chunkInputTokens, densificationDefaultMergeInputTokens))) inputEstimatedTokens=\(planner.estimatedTokenCount(for: request.inputText)) chunks=\(chunks.count) parallel=\(maxParallelRuns)]"
@@ -215,7 +215,7 @@ private extension ProviderClient {
             let mergeGroups = planner.mergeGroups(for: mergedPartials)
             let mergeParallelism = max(
                 1,
-                min(densificationParallelRequestLimit(for: provider), mergeGroups.count)
+                min(providerWorkLimit(for: provider), mergeGroups.count)
             )
             AppLogger.debug(
                 "Densification merge pass planned [provider=\(provider.rawValue) pass=\(pass) inputPartials=\(mergedPartials.count) groups=\(mergeGroups.count) parallel=\(mergeParallelism)]"
@@ -290,44 +290,67 @@ private extension ProviderClient {
 
 public enum ProviderClientFactory {
     public static func make(provider: ProviderName, session: URLSession = .shared) -> ProviderClient {
-        let client: ProviderClient
         switch provider {
         case .openai:
-            client = OpenAIProviderClient(session: session)
+            return OpenAIProviderClient(session: session)
         case .anthropic:
-            client = AnthropicProviderClient(session: session)
+            return AnthropicProviderClient(session: session)
         case .gemini:
-            client = GeminiProviderClient(session: session)
+            return GeminiProviderClient(session: session)
         case .apple:
-            client = AppleFoundationProviderClient()
+            return AppleFoundationProviderClient()
         }
-        if provider.serializeProviderCalls {
-            return SerializedProviderClient(provider: provider, wrapped: client)
-        }
-        return client
     }
 }
 
-actor ProviderCallSerializer {
-    static let shared = ProviderCallSerializer()
-    private var activeProviders: Set<String> = []
+private let providerRequestTimeoutSeconds: TimeInterval = 60
+private let localDebugResponseDelayNanoseconds: UInt64 = 3_000_000_000
+private let localDebugDensificationCharacterLimit = 200
+private let densificationSystemInstruction = "You produce concise, complete context with no missing key information."
+private let appleProactiveInitialChunkInputTokens = 1800
+private let densificationMinimumChunkInputTokens = 320
+private let reactiveContextWindowInitialChunkInputTokens = 100_000
+private let densificationDefaultMergeInputTokens = 2_000
+private let densificationChunkTargetWordLimit = 180
+private let densificationMergeTargetWordLimit = 260
+private let appleContextWindowExceededMessage = "Context Window Size Exceeded. Apple Foundation Models allow up to 4,096 tokens per session (including instructions, input, and output). Start a new session and retry with shorter input or output."
+
+private func providerWorkLimit(for provider: ProviderName) -> Int {
+    DevelopmentConfig.shared.providerParallelWorkLimit(for: provider)
+}
+
+private func formattedElapsedSeconds(since startDate: Date) -> String {
+    String(format: "%.2f", Date().timeIntervalSince(startDate))
+}
+
+actor ProviderWorkLimiter {
+    static let shared = ProviderWorkLimiter()
+    private var inFlightByProvider: [String: Int] = [:]
     private var waitersByProvider: [String: [CheckedContinuation<Void, Never>]] = [:]
 
-    func acquire(provider: ProviderName) async {
+    func acquire(provider: ProviderName, limit: Int) async -> Bool {
         let key = provider.rawValue
-        if !activeProviders.contains(key) {
-            activeProviders.insert(key)
-            return
+        let normalizedLimit = max(1, limit)
+        let inFlight = inFlightByProvider[key, default: 0]
+        guard inFlight >= normalizedLimit else {
+            inFlightByProvider[key] = inFlight + 1
+            return false
         }
         await withCheckedContinuation { continuation in
             waitersByProvider[key, default: []].append(continuation)
         }
+        return true
     }
 
     func release(provider: ProviderName) {
         let key = provider.rawValue
         guard var waiters = waitersByProvider[key], !waiters.isEmpty else {
-            activeProviders.remove(key)
+            let nextInFlight = max(0, inFlightByProvider[key, default: 0] - 1)
+            if nextInFlight == 0 {
+                inFlightByProvider[key] = nil
+            } else {
+                inFlightByProvider[key] = nextInFlight
+            }
             waitersByProvider[key] = nil
             return
         }
@@ -341,61 +364,27 @@ actor ProviderCallSerializer {
     }
 }
 
-struct SerializedProviderClient: ProviderClient {
-    let provider: ProviderName
-    let wrapped: ProviderClient
-
-    func requestText(request: ProviderTextRequest, apiKey: String, model: String) async throws -> String {
-        try await runSerialized {
-            try await wrapped.requestText(request: request, apiKey: apiKey, model: model)
-        }
+private func withProviderWorkPermit<T>(
+    provider: ProviderName,
+    operationName: String,
+    _ operation: () async throws -> T
+) async throws -> T {
+    let limit = providerWorkLimit(for: provider)
+    let limiter = ProviderWorkLimiter.shared
+    let waited = await limiter.acquire(provider: provider, limit: limit)
+    if waited {
+        AppLogger.debug(
+            "Provider work permit acquired after wait [provider=\(provider.rawValue) operation=\(operationName) limit=\(limit)]"
+        )
     }
-
-    func densify(request: DensificationRequest, apiKey: String, model: String) async throws -> String {
-        try await runSerialized {
-            try await wrapped.densify(request: request, apiKey: apiKey, model: model)
-        }
+    do {
+        let result = try await operation()
+        await limiter.release(provider: provider)
+        return result
+    } catch {
+        await limiter.release(provider: provider)
+        throw error
     }
-
-    private func runSerialized<T>(_ operation: () async throws -> T) async throws -> T {
-        let serializer = ProviderCallSerializer.shared
-        await serializer.acquire(provider: provider)
-        do {
-            let result = try await operation()
-            await serializer.release(provider: provider)
-            return result
-        } catch {
-            await serializer.release(provider: provider)
-            throw error
-        }
-    }
-}
-
-private let providerRequestTimeoutSeconds: TimeInterval = 60
-private let localDebugResponseDelayNanoseconds: UInt64 = 3_000_000_000
-private let localDebugDensificationCharacterLimit = 200
-private let densificationSystemInstruction = "You produce concise, complete context with no missing key information."
-private let appleProactiveInitialChunkInputTokens = 1800
-private let densificationMinimumChunkInputTokens = 320
-private let reactiveContextWindowInitialChunkInputTokens = 100_000
-private let densificationDefaultMergeInputTokens = 2_000
-private let appleDensificationParallelRequestLimit = 6
-private let thirdPartyDensificationParallelRequestLimit = 3
-private let densificationChunkTargetWordLimit = 180
-private let densificationMergeTargetWordLimit = 260
-private let appleContextWindowExceededMessage = "Context Window Size Exceeded. Apple Foundation Models allow up to 4,096 tokens per session (including instructions, input, and output). Start a new session and retry with shorter input or output."
-
-private func densificationParallelRequestLimit(for provider: ProviderName) -> Int {
-    switch provider {
-    case .apple:
-        return appleDensificationParallelRequestLimit
-    case .openai, .anthropic, .gemini:
-        return thirdPartyDensificationParallelRequestLimit
-    }
-}
-
-private func formattedElapsedSeconds(since startDate: Date) -> String {
-    String(format: "%.2f", Date().timeIntervalSince(startDate))
 }
 
 private func providerRequestErrorMessage(from data: Data, fallback: String) -> String {
@@ -608,37 +597,39 @@ private struct OpenAIProviderClient: ProviderClient {
     let session: URLSession
 
     func requestText(request: ProviderTextRequest, apiKey: String, model: String) async throws -> String {
-        let endpoint = URL(string: "https://api.openai.com/v1/chat/completions")!
-        var urlRequest = URLRequest(url: endpoint)
-        urlRequest.httpMethod = "POST"
-        urlRequest.timeoutInterval = providerRequestTimeoutSeconds
-        urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        try await withProviderWorkPermit(provider: provider, operationName: "request_text") {
+            let endpoint = URL(string: "https://api.openai.com/v1/chat/completions")!
+            var urlRequest = URLRequest(url: endpoint)
+            urlRequest.httpMethod = "POST"
+            urlRequest.timeoutInterval = providerRequestTimeoutSeconds
+            urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+            urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        var messages: [[String: Any]] = []
-        if
-            let systemInstruction = request.systemInstruction?.trimmingCharacters(in: .whitespacesAndNewlines),
-            !systemInstruction.isEmpty
-        {
-            messages.append(["role": "system", "content": systemInstruction])
+            var messages: [[String: Any]] = []
+            if
+                let systemInstruction = request.systemInstruction?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !systemInstruction.isEmpty
+            {
+                messages.append(["role": "system", "content": systemInstruction])
+            }
+            messages.append(["role": "user", "content": request.prompt])
+
+            let body: [String: Any] = [
+                "model": model,
+                "messages": messages
+            ]
+            urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+            let validatedData = try await requestData(session: session, request: urlRequest, providerName: "OpenAI")
+            let json = try JSONSerialization.jsonObject(with: validatedData) as? [String: Any]
+            let choices = json?["choices"] as? [[String: Any]]
+            let message = choices?.first?["message"] as? [String: Any]
+            let content = message?["content"] as? String
+            guard let text = content?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
+                throw AppError.providerRequestFailed("OpenAI returned an empty response. Check model and account status.")
+            }
+            return text
         }
-        messages.append(["role": "user", "content": request.prompt])
-
-        let body: [String: Any] = [
-            "model": model,
-            "messages": messages
-        ]
-        urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let validatedData = try await requestData(session: session, request: urlRequest, providerName: "OpenAI")
-        let json = try JSONSerialization.jsonObject(with: validatedData) as? [String: Any]
-        let choices = json?["choices"] as? [[String: Any]]
-        let message = choices?.first?["message"] as? [String: Any]
-        let content = message?["content"] as? String
-        guard let text = content?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
-            throw AppError.providerRequestFailed("OpenAI returned an empty response. Check model and account status.")
-        }
-        return text
     }
 }
 
@@ -647,40 +638,42 @@ private struct AnthropicProviderClient: ProviderClient {
     let session: URLSession
 
     func requestText(request: ProviderTextRequest, apiKey: String, model: String) async throws -> String {
-        let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
-        var urlRequest = URLRequest(url: endpoint)
-        urlRequest.httpMethod = "POST"
-        urlRequest.timeoutInterval = providerRequestTimeoutSeconds
-        urlRequest.setValue(apiKey, forHTTPHeaderField: "x-api-key")
-        urlRequest.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        try await withProviderWorkPermit(provider: provider, operationName: "request_text") {
+            let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
+            var urlRequest = URLRequest(url: endpoint)
+            urlRequest.httpMethod = "POST"
+            urlRequest.timeoutInterval = providerRequestTimeoutSeconds
+            urlRequest.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+            urlRequest.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+            urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        var body: [String: Any] = [
-            "model": model,
-            "max_tokens": 1400,
-            "messages": [
-                [
-                    "role": "user",
-                    "content": request.prompt
+            var body: [String: Any] = [
+                "model": model,
+                "max_tokens": 1400,
+                "messages": [
+                    [
+                        "role": "user",
+                        "content": request.prompt
+                    ]
                 ]
             ]
-        ]
-        if
-            let systemInstruction = request.systemInstruction?.trimmingCharacters(in: .whitespacesAndNewlines),
-            !systemInstruction.isEmpty
-        {
-            body["system"] = systemInstruction
-        }
-        urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body)
+            if
+                let systemInstruction = request.systemInstruction?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !systemInstruction.isEmpty
+            {
+                body["system"] = systemInstruction
+            }
+            urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let validatedData = try await requestData(session: session, request: urlRequest, providerName: "Anthropic")
-        let json = try JSONSerialization.jsonObject(with: validatedData) as? [String: Any]
-        let content = json?["content"] as? [[String: Any]]
-        let text = content?.first?["text"] as? String
-        guard let normalized = text?.trimmingCharacters(in: .whitespacesAndNewlines), !normalized.isEmpty else {
-            throw AppError.providerRequestFailed("Anthropic returned an empty response. Check model and account status.")
+            let validatedData = try await requestData(session: session, request: urlRequest, providerName: "Anthropic")
+            let json = try JSONSerialization.jsonObject(with: validatedData) as? [String: Any]
+            let content = json?["content"] as? [[String: Any]]
+            let text = content?.first?["text"] as? String
+            guard let normalized = text?.trimmingCharacters(in: .whitespacesAndNewlines), !normalized.isEmpty else {
+                throw AppError.providerRequestFailed("Anthropic returned an empty response. Check model and account status.")
+            }
+            return normalized
         }
-        return normalized
     }
 }
 
@@ -689,39 +682,41 @@ private struct GeminiProviderClient: ProviderClient {
     let session: URLSession
 
     func requestText(request: ProviderTextRequest, apiKey: String, model: String) async throws -> String {
-        let endpoint = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(model):generateContent?key=\(apiKey)")!
-        var urlRequest = URLRequest(url: endpoint)
-        urlRequest.httpMethod = "POST"
-        urlRequest.timeoutInterval = providerRequestTimeoutSeconds
-        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        try await withProviderWorkPermit(provider: provider, operationName: "request_text") {
+            let endpoint = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(model):generateContent?key=\(apiKey)")!
+            var urlRequest = URLRequest(url: endpoint)
+            urlRequest.httpMethod = "POST"
+            urlRequest.timeoutInterval = providerRequestTimeoutSeconds
+            urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        var body: [String: Any] = [
-            "contents": [
-                [
-                    "parts": [
-                        ["text": request.prompt]
+            var body: [String: Any] = [
+                "contents": [
+                    [
+                        "parts": [
+                            ["text": request.prompt]
+                        ]
                     ]
                 ]
             ]
-        ]
-        if
-            let systemInstruction = request.systemInstruction?.trimmingCharacters(in: .whitespacesAndNewlines),
-            !systemInstruction.isEmpty
-        {
-            body["system_instruction"] = ["parts": [["text": systemInstruction]]]
-        }
-        urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body)
+            if
+                let systemInstruction = request.systemInstruction?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !systemInstruction.isEmpty
+            {
+                body["system_instruction"] = ["parts": [["text": systemInstruction]]]
+            }
+            urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let validatedData = try await requestData(session: session, request: urlRequest, providerName: "Gemini")
-        let json = try JSONSerialization.jsonObject(with: validatedData) as? [String: Any]
-        let candidates = json?["candidates"] as? [[String: Any]]
-        let content = candidates?.first?["content"] as? [String: Any]
-        let parts = content?["parts"] as? [[String: Any]]
-        let text = parts?.first?["text"] as? String
-        guard let normalized = text?.trimmingCharacters(in: .whitespacesAndNewlines), !normalized.isEmpty else {
-            throw AppError.providerRequestFailed("Gemini returned an empty response. Check model and account status.")
+            let validatedData = try await requestData(session: session, request: urlRequest, providerName: "Gemini")
+            let json = try JSONSerialization.jsonObject(with: validatedData) as? [String: Any]
+            let candidates = json?["candidates"] as? [[String: Any]]
+            let content = candidates?.first?["content"] as? [String: Any]
+            let parts = content?["parts"] as? [[String: Any]]
+            let text = parts?.first?["text"] as? String
+            guard let normalized = text?.trimmingCharacters(in: .whitespacesAndNewlines), !normalized.isEmpty else {
+                throw AppError.providerRequestFailed("Gemini returned an empty response. Check model and account status.")
+            }
+            return normalized
         }
-        return normalized
     }
 }
 
@@ -769,31 +764,33 @@ private struct AppleFoundationProviderClient: ProviderClient {
     }
 
     func requestText(request: ProviderTextRequest, apiKey: String, model: String) async throws -> String {
+        try await withProviderWorkPermit(provider: provider, operationName: "request_text") {
 #if canImport(FoundationModels)
-        if #available(macOS 26.0, *) {
-            guard SystemLanguageModel.default.availability == .available else {
-                throw AppError.providerRequestFailed(
-                    "Apple Foundation Models are not available on this Mac."
-                )
-            }
-            let session = makeLanguageModelSession(systemInstruction: request.systemInstruction)
-            do {
-                let response = try await session.respond(to: request.prompt)
-                let text = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !text.isEmpty else {
-                    throw AppError.providerRequestFailed("Apple Foundation Models returned an empty response.")
+            if #available(macOS 26.0, *) {
+                guard SystemLanguageModel.default.availability == .available else {
+                    throw AppError.providerRequestFailed(
+                        "Apple Foundation Models are not available on this Mac."
+                    )
                 }
-                return text
-            } catch let appError as AppError {
-                throw appError
-            } catch {
-                throw mappedAppleFoundationError(error)
+                let session = makeLanguageModelSession(systemInstruction: request.systemInstruction)
+                do {
+                    let response = try await session.respond(to: request.prompt)
+                    let text = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !text.isEmpty else {
+                        throw AppError.providerRequestFailed("Apple Foundation Models returned an empty response.")
+                    }
+                    return text
+                } catch let appError as AppError {
+                    throw appError
+                } catch {
+                    throw mappedAppleFoundationError(error)
+                }
             }
-        }
 #endif
-        throw AppError.providerRequestFailed(
-            "Apple Foundation Models are unavailable in this environment."
-        )
+            throw AppError.providerRequestFailed(
+                "Apple Foundation Models are unavailable in this environment."
+            )
+        }
     }
 }
 

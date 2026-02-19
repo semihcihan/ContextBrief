@@ -70,6 +70,26 @@ final class CaptureProcessingQueueTests: XCTestCase {
         XCTAssertEqual(queue.queuedCount, 0)
     }
 
+    func testQueueSupportsConfiguredParallelCaptureStarts() {
+        let queue = CaptureProcessingQueue(maxConcurrentCaptures: 2)
+        let first = makeRequest(source: "menu")
+        let second = makeRequest(source: "hotkey")
+        let third = makeRequest(source: "shortcut")
+
+        XCTAssertEqual(queue.requestCapture(first), .startNow(request: first))
+        XCTAssertEqual(queue.requestCapture(second), .startNow(request: second))
+        XCTAssertEqual(queue.requestCapture(third), .queued(count: 1))
+        XCTAssertTrue(queue.isCaptureInProgress)
+        XCTAssertEqual(queue.activeCaptureCount, 2)
+        XCTAssertEqual(queue.queuedCount, 1)
+
+        XCTAssertEqual(
+            queue.completeCurrentCapture(),
+            .startNext(request: third, remainingQueued: 0)
+        )
+        XCTAssertEqual(queue.activeCaptureCount, 2)
+    }
+
     private func makeRequest(source: String) -> QueuedCaptureRequest {
         QueuedCaptureRequest(source: source)
     }

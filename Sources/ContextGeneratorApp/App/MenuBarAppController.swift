@@ -55,6 +55,9 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
     private var checkForUpdatesMenuItem: NSMenuItem?
     private var globalHotkeyManager: GlobalHotkeyManager?
     private var areGlobalHotkeysSuspended = false
+    private var pendingContextTitleThresholdByContextId: [UUID: Int] = [:]
+    private var generatedContextTitleThresholdByContextId: [UUID: Int] = [:]
+    private var isContextTitleFlushInProgress = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppLogger.debug("App launch finished. debugLoggingEnabled=\(AppLogger.debugLoggingEnabled)")
@@ -429,11 +432,10 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
             AppLogger.debug("promoteLastCapture success newContextId=\(context.id.uuidString) title=\(context.title)")
             updateFeedback("Moved last snapshot to new context")
             refreshMenuState()
-            Task {
-                await applyGeneratedContextName(contextId: context.id, fallback: context.title)
-                await MainActor.run { [weak self] in
-                    self?.refreshMenuState()
-                }
+            Task { @MainActor [weak self] in
+                self?.enqueueContextTitleRefreshIfNeeded(contextId: context.id)
+                await self?.flushPendingContextTitleRefreshesIfNeeded()
+                self?.refreshMenuState()
             }
         } catch {
             reportUnexpectedNonFatal(error, context: "promote_last_capture")
@@ -468,6 +470,12 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
                     }
                     let summary = await self.snapshotProcessingCoordinator.retrySnapshots(snapshotIds)
                     await MainActor.run {
+                        if let contextId = try? self.sessionManager.currentContextIfExists()?.id {
+                            self.enqueueContextTitleRefreshIfNeeded(contextId: contextId)
+                        }
+                        Task { @MainActor [weak self] in
+                            await self?.flushPendingContextTitleRefreshesIfNeeded()
+                        }
                         self.updateFeedback(SnapshotProcessingCoordinator.retrySummaryMessage(summary))
                         self.refreshMenuState()
                     }
@@ -806,6 +814,7 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
         return ModelConfig(provider: provider, model: model, apiKey: apiKey)
     }
 
+    @MainActor
     private func applyGeneratedNames(_ result: CaptureWorkflowResult) async {
         guard let config = ((try? configuredModelConfig(forTitleGeneration: true)) ?? nil) else {
             AppLogger.debug("applyGeneratedNames skipped: model config unavailable")
@@ -826,26 +835,73 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
             AppLogger.debug("applyGeneratedNames snapshot title updated snapshotId=\(snapshot.id.uuidString) title=\(snapshot.title)")
         } catch {}
 
-        if result.snapshot.sequence == 1 {
-            _ = try? sessionManager.renameContext(result.context.id, title: snapshotTitle)
-            AppLogger.debug(
-                "applyGeneratedNames context title set from first snapshot contextId=\(result.context.id.uuidString) title=\(snapshotTitle)"
-            )
-            return
-        }
-
-        let refreshEvery = DevelopmentConfig.shared.contextTitleRefreshEvery(for: config.provider)
-        guard result.snapshot.sequence % refreshEvery == 0 else {
-            AppLogger.debug(
-                "applyGeneratedNames context title skipped sequence=\(result.snapshot.sequence) contextId=\(result.context.id.uuidString) refreshEvery=\(refreshEvery) provider=\(config.provider.rawValue)"
-            )
-            return
-        }
-
-        await applyGeneratedContextName(contextId: result.context.id, fallback: result.context.title)
+        enqueueContextTitleRefreshIfNeeded(contextId: result.context.id, provider: config.provider)
+        await flushPendingContextTitleRefreshesIfNeeded()
     }
 
-    private func applyGeneratedContextName(contextId: UUID, fallback: String) async {
+    @MainActor
+    private func enqueueContextTitleRefreshIfNeeded(contextId: UUID) {
+        guard let config = ((try? configuredModelConfig(forTitleGeneration: true)) ?? nil) else {
+            AppLogger.debug("enqueueContextTitleRefresh skipped: model config unavailable")
+            return
+        }
+        enqueueContextTitleRefreshIfNeeded(contextId: contextId, provider: config.provider)
+    }
+
+    @MainActor
+    private func enqueueContextTitleRefreshIfNeeded(contextId: UUID, provider: ProviderName) {
+        guard
+            let snapshots = try? repository.snapshots(in: contextId),
+            !snapshots.isEmpty
+        else {
+            return
+        }
+        let successfulSnapshotCount = snapshots.filter { snapshot in
+            snapshot.status == .ready
+        }.count
+        let refreshEvery = DevelopmentConfig.shared.contextTitleRefreshEvery(for: provider)
+        let threshold = (successfulSnapshotCount / refreshEvery) * refreshEvery
+        guard threshold > 0 else {
+            return
+        }
+        let generatedThreshold = generatedContextTitleThresholdByContextId[contextId, default: 0]
+        let pendingThreshold = pendingContextTitleThresholdByContextId[contextId, default: 0]
+        guard threshold > max(generatedThreshold, pendingThreshold) else {
+            return
+        }
+        pendingContextTitleThresholdByContextId[contextId] = threshold
+        AppLogger.debug(
+            "enqueueContextTitleRefresh queued contextId=\(contextId.uuidString) successful=\(successfulSnapshotCount) threshold=\(threshold) refreshEvery=\(refreshEvery) provider=\(provider.rawValue)"
+        )
+    }
+
+    @MainActor
+    private func flushPendingContextTitleRefreshesIfNeeded() async {
+        guard !isContextTitleFlushInProgress else {
+            return
+        }
+        guard !isAnyProcessing else {
+            return
+        }
+        guard !pendingContextTitleThresholdByContextId.isEmpty else {
+            return
+        }
+        isContextTitleFlushInProgress = true
+        defer {
+            isContextTitleFlushInProgress = false
+        }
+        while !isAnyProcessing, let next = pendingContextTitleThresholdByContextId.first {
+            pendingContextTitleThresholdByContextId[next.key] = nil
+            await applyGeneratedContextName(contextId: next.key)
+            generatedContextTitleThresholdByContextId[next.key] = max(
+                generatedContextTitleThresholdByContextId[next.key, default: 0],
+                next.value
+            )
+        }
+    }
+
+    @MainActor
+    private func applyGeneratedContextName(contextId: UUID) async {
         guard let config = ((try? configuredModelConfig(forTitleGeneration: true)) ?? nil) else {
             AppLogger.debug("applyGeneratedContextName skipped: model config unavailable")
             return
@@ -864,7 +920,7 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
             provider: config.provider,
             model: config.model,
             apiKey: config.apiKey,
-            fallback: fallback
+            fallback: context.title
         )
         _ = try? sessionManager.renameContext(contextId, title: title)
         AppLogger.debug("applyGeneratedContextName updated contextId=\(contextId.uuidString) oldTitle=\(context.title) newTitle=\(title)")
@@ -1030,6 +1086,9 @@ extension MenuBarAppController: SnapshotProcessingCoordinatorDelegate {
     @MainActor
     func snapshotProcessingCoordinatorDidChangeProcessingState(_ coordinator: SnapshotProcessingCoordinator) {
         refreshMenuState()
+        Task { @MainActor [weak self] in
+            await self?.flushPendingContextTitleRefreshesIfNeeded()
+        }
     }
 
     @MainActor
@@ -1078,11 +1137,12 @@ extension MenuBarAppController: SnapshotProcessingCoordinatorDelegate {
         AppLogger.debug("captureContext success source=\(source) snapshotId=\(result.snapshot.id.uuidString) contextId=\(result.context.id.uuidString)")
         eventTracker.track(.captureSucceeded, parameters: ["sequence": result.snapshot.sequence])
         updateFeedback("Snapshot added to \(result.context.title)")
-        Task {
-            await applyGeneratedNames(result)
-            await MainActor.run {
-                self.refreshMenuState()
+        Task { @MainActor [weak self] in
+            guard let self else {
+                return
             }
+            await applyGeneratedNames(result)
+            refreshMenuState()
         }
         AppLogger.info("Capture complete source=\(source) snapshot=\(result.snapshot.id.uuidString)")
     }
