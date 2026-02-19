@@ -363,6 +363,19 @@ final class ContextLibraryController: NSViewController, NSOutlineViewDataSource,
                 )
             )
         }
+        #if DEBUG
+        if !snapshot.rawContent.isEmpty {
+            details.append(
+                NSAttributedString(
+                    string: "\n\n——— Raw ———\n\n\(snapshot.rawContent)",
+                    attributes: [
+                        .font: bodyFont,
+                        .foregroundColor: NSColor.secondaryLabelColor
+                    ]
+                )
+            )
+        }
+        #endif
         if let textStorage = detailTextView.textStorage {
             textStorage.setAttributedString(details)
             return

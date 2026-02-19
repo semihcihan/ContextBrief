@@ -150,57 +150,136 @@ private extension ProviderClient {
         guard !chunks.isEmpty else {
             return ""
         }
+        let maxParallelRuns = max(
+            1,
+            min(densificationParallelRequestLimit(for: provider), chunks.count)
+        )
+        AppLogger.debug(
+            "Densification chunk plan [provider=\(provider.rawValue) chunkInputTokens=\(chunkInputTokens) mergeInputTokens=\(max(densificationMinimumChunkInputTokens, min(chunkInputTokens, densificationDefaultMergeInputTokens))) inputEstimatedTokens=\(planner.estimatedTokenCount(for: request.inputText)) chunks=\(chunks.count) parallel=\(maxParallelRuns)]"
+        )
 
-        var partials: [String] = []
-        partials.reserveCapacity(chunks.count)
-        for (index, chunk) in chunks.enumerated() {
-            stats.runCount += 1
-            partials.append(
-                try await requestText(
-                    request: ProviderTextRequest(
-                        systemInstruction: densificationSystemInstruction,
-                        prompt: densificationChunkPrompt(
-                            inputText: chunk,
-                            appName: request.appName,
-                            windowTitle: request.windowTitle,
-                            chunkIndex: index + 1,
-                            totalChunks: chunks.count
-                        )
-                    ),
-                    apiKey: apiKey,
-                    model: model
-                )
+        let chunkRuns = chunks.enumerated().map { index, chunk in
+            let chunkPrompt = densificationChunkPrompt(
+                inputText: chunk,
+                appName: request.appName,
+                windowTitle: request.windowTitle,
+                chunkIndex: index + 1,
+                totalChunks: chunks.count
             )
+            stats.runCount += 1
+            return (
+                index: index,
+                run: stats.runCount,
+                prompt: chunkPrompt
+            )
+        }
+        let partials = try await withThrowingTaskGroup(of: (Int, String).self, returning: [String].self) { group in
+            var nextChunkRunIndex = 0
+            func enqueueNextChunkRun() {
+                guard nextChunkRunIndex < chunkRuns.count else {
+                    return
+                }
+                let chunkRun = chunkRuns[nextChunkRunIndex]
+                nextChunkRunIndex += 1
+                group.addTask {
+                    let chunkStartedAt = Date()
+                    let chunkOutput = try await requestText(
+                        request: ProviderTextRequest(
+                            systemInstruction: densificationSystemInstruction,
+                            prompt: chunkRun.prompt
+                        ),
+                        apiKey: apiKey,
+                        model: model
+                    )
+                    AppLogger.debug(
+                        "Densification chunk run completed [provider=\(provider.rawValue) run=\(chunkRun.run) chunk=\(chunkRun.index + 1)/\(chunks.count) promptEstimatedTokens=\(planner.estimatedTokenCount(for: chunkRun.prompt)) outputEstimatedTokens=\(planner.estimatedTokenCount(for: chunkOutput)) seconds=\(formattedElapsedSeconds(since: chunkStartedAt))]"
+                    )
+                    return (chunkRun.index, chunkOutput)
+                }
+            }
+            for _ in 0 ..< maxParallelRuns {
+                enqueueNextChunkRun()
+            }
+
+            var outputs = Array(repeating: "", count: chunks.count)
+            while let (index, chunkOutput) = try await group.next() {
+                outputs[index] = chunkOutput
+                enqueueNextChunkRun()
+            }
+            return outputs
         }
 
         var mergedPartials = partials
         var pass = 1
         while mergedPartials.count > 1 {
             let mergeGroups = planner.mergeGroups(for: mergedPartials)
+            let mergeParallelism = max(
+                1,
+                min(densificationParallelRequestLimit(for: provider), mergeGroups.count)
+            )
+            AppLogger.debug(
+                "Densification merge pass planned [provider=\(provider.rawValue) pass=\(pass) inputPartials=\(mergedPartials.count) groups=\(mergeGroups.count) parallel=\(mergeParallelism)]"
+            )
             if mergeGroups.count == mergedPartials.count, mergeGroups.allSatisfy({ $0.count == 1 }) {
+                AppLogger.debug(
+                    "Densification merge pass not reducing [provider=\(provider.rawValue) pass=\(pass) inputPartials=\(mergedPartials.count)]"
+                )
                 return mergedPartials.joined(separator: "\n\n")
             }
 
-            var reducedPartials: [String] = []
-            reducedPartials.reserveCapacity(mergeGroups.count)
-            for group in mergeGroups {
+            let mergeRuns = mergeGroups.enumerated().map { groupIndex, mergeGroup in
+                let mergePrompt = densificationMergePrompt(
+                    partials: mergeGroup,
+                    appName: request.appName,
+                    windowTitle: request.windowTitle,
+                    pass: pass
+                )
                 stats.runCount += 1
-                reducedPartials.append(
-                    try await requestText(
-                        request: ProviderTextRequest(
-                            systemInstruction: densificationSystemInstruction,
-                            prompt: densificationMergePrompt(
-                                partials: group,
-                                appName: request.appName,
-                                windowTitle: request.windowTitle,
-                                pass: pass
-                            )
-                        ),
-                        apiKey: apiKey,
-                        model: model
-                    )
+                return (
+                    groupIndex: groupIndex,
+                    run: stats.runCount,
+                    prompt: mergePrompt,
+                    groupPartials: mergeGroup.count
                 )
             }
+            let reducedPartials = try await withThrowingTaskGroup(of: (Int, String).self, returning: [String].self) { group in
+                var nextMergeRunIndex = 0
+                func enqueueNextMergeRun() {
+                    guard nextMergeRunIndex < mergeRuns.count else {
+                        return
+                    }
+                    let mergeRun = mergeRuns[nextMergeRunIndex]
+                    nextMergeRunIndex += 1
+                    group.addTask {
+                        let mergeStartedAt = Date()
+                        let mergedOutput = try await requestText(
+                            request: ProviderTextRequest(
+                                systemInstruction: densificationSystemInstruction,
+                                prompt: mergeRun.prompt
+                            ),
+                            apiKey: apiKey,
+                            model: model
+                        )
+                        AppLogger.debug(
+                            "Densification merge run completed [provider=\(provider.rawValue) run=\(mergeRun.run) pass=\(pass) group=\(mergeRun.groupIndex + 1)/\(mergeGroups.count) groupPartials=\(mergeRun.groupPartials) promptEstimatedTokens=\(planner.estimatedTokenCount(for: mergeRun.prompt)) outputEstimatedTokens=\(planner.estimatedTokenCount(for: mergedOutput)) seconds=\(formattedElapsedSeconds(since: mergeStartedAt))]"
+                        )
+                        return (mergeRun.groupIndex, mergedOutput)
+                    }
+                }
+                for _ in 0 ..< mergeParallelism {
+                    enqueueNextMergeRun()
+                }
+
+                var outputs = Array(repeating: "", count: mergeGroups.count)
+                while let (groupIndex, mergedOutput) = try await group.next() {
+                    outputs[groupIndex] = mergedOutput
+                    enqueueNextMergeRun()
+                }
+                return outputs
+            }
+            AppLogger.debug(
+                "Densification merge pass completed [provider=\(provider.rawValue) pass=\(pass) outputPartials=\(reducedPartials.count)]"
+            )
             mergedPartials = reducedPartials
             pass += 1
         }
@@ -292,7 +371,7 @@ struct SerializedProviderClient: ProviderClient {
     }
 }
 
-private let providerRequestTimeoutSeconds: TimeInterval = 30
+private let providerRequestTimeoutSeconds: TimeInterval = 60
 private let localDebugResponseDelayNanoseconds: UInt64 = 3_000_000_000
 private let localDebugDensificationCharacterLimit = 200
 private let densificationSystemInstruction = "You produce concise, complete context with no missing key information."
@@ -300,9 +379,20 @@ private let appleProactiveInitialChunkInputTokens = 1800
 private let densificationMinimumChunkInputTokens = 320
 private let reactiveContextWindowInitialChunkInputTokens = 100_000
 private let densificationDefaultMergeInputTokens = 2_000
+private let appleDensificationParallelRequestLimit = 6
+private let thirdPartyDensificationParallelRequestLimit = 3
 private let densificationChunkTargetWordLimit = 180
 private let densificationMergeTargetWordLimit = 260
 private let appleContextWindowExceededMessage = "Context Window Size Exceeded. Apple Foundation Models allow up to 4,096 tokens per session (including instructions, input, and output). Start a new session and retry with shorter input or output."
+
+private func densificationParallelRequestLimit(for provider: ProviderName) -> Int {
+    switch provider {
+    case .apple:
+        return appleDensificationParallelRequestLimit
+    case .openai, .anthropic, .gemini:
+        return thirdPartyDensificationParallelRequestLimit
+    }
+}
 
 private func formattedElapsedSeconds(since startDate: Date) -> String {
     String(format: "%.2f", Date().timeIntervalSince(startDate))
