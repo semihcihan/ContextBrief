@@ -19,94 +19,63 @@ private actor ProviderCallConcurrencyTracker {
     }
 }
 
-private struct SlowRecordingProviderClient: ProviderClient {
-    let provider: ProviderName
-    let tracker: ProviderCallConcurrencyTracker
-    let delayNanoseconds: UInt64
+private actor ProviderPresenceTracker {
+    private var inFlightByProvider: [ProviderName: Int] = [:]
+    private var maxCombinedInFlight = 0
 
-    func requestText(request: ProviderTextRequest, apiKey: String, model: String) async throws -> String {
-        await tracker.beginCall()
-        try? await Task.sleep(nanoseconds: delayNanoseconds)
-        await tracker.endCall()
-        return "ok"
+    func beginCall(provider: ProviderName) {
+        inFlightByProvider[provider, default: 0] += 1
+        maxCombinedInFlight = max(maxCombinedInFlight, inFlightByProvider.values.reduce(0, +))
     }
 
-    func densify(request: DensificationRequest, apiKey: String, model: String) async throws -> String {
-        await tracker.beginCall()
-        try? await Task.sleep(nanoseconds: delayNanoseconds)
-        await tracker.endCall()
-        return "ok"
+    func endCall(provider: ProviderName) {
+        inFlightByProvider[provider] = max(0, inFlightByProvider[provider, default: 0] - 1)
+    }
+
+    func peakCombinedConcurrency() -> Int {
+        maxCombinedInFlight
     }
 }
 
 final class ProviderClientSerializationTests: XCTestCase {
-    func testSerializeProviderCallsEnabledOnlyForApple() {
-        XCTAssertTrue(ProviderName.apple.serializeProviderCalls)
-        XCTAssertFalse(ProviderName.openai.serializeProviderCalls)
-        XCTAssertFalse(ProviderName.anthropic.serializeProviderCalls)
-        XCTAssertFalse(ProviderName.gemini.serializeProviderCalls)
-    }
-
-    func testFactoryWrapsOnlySerializedProviders() {
-        XCTAssertTrue(ProviderClientFactory.make(provider: .apple) is SerializedProviderClient)
-        XCTAssertFalse(ProviderClientFactory.make(provider: .openai) is SerializedProviderClient)
-        XCTAssertFalse(ProviderClientFactory.make(provider: .anthropic) is SerializedProviderClient)
-        XCTAssertFalse(ProviderClientFactory.make(provider: .gemini) is SerializedProviderClient)
-    }
-
-    func testSerializedProviderClientSerializesConcurrentRequestTextCalls() async throws {
+    func testProviderWorkLimiterRespectsConfiguredLimitPerProvider() async {
+        let limiter = ProviderWorkLimiter()
         let tracker = ProviderCallConcurrencyTracker()
-        let wrapped = SlowRecordingProviderClient(
-            provider: .apple,
-            tracker: tracker,
-            delayNanoseconds: 80_000_000
-        )
-        let client = SerializedProviderClient(provider: .apple, wrapped: wrapped)
-
-        async let first = client.requestText(
-            request: ProviderTextRequest(prompt: "first"),
-            apiKey: "",
-            model: "apple"
-        )
-        async let second = client.requestText(
-            request: ProviderTextRequest(prompt: "second"),
-            apiKey: "",
-            model: "apple"
-        )
-
-        _ = try await (first, second)
-
+        await withTaskGroup(of: Void.self) { group in
+            for _ in 0 ..< 6 {
+                group.addTask {
+                    _ = await limiter.acquire(provider: .openai, limit: 2)
+                    await tracker.beginCall()
+                    try? await Task.sleep(nanoseconds: 40_000_000)
+                    await tracker.endCall()
+                    await limiter.release(provider: .openai)
+                }
+            }
+        }
         let peakConcurrency = await tracker.peakConcurrency()
-        XCTAssertEqual(peakConcurrency, 1)
+        XCTAssertEqual(peakConcurrency, 2)
     }
 
-    func testSerializedProviderClientSerializesAcrossRequestAndDensifyCalls() async throws {
-        let tracker = ProviderCallConcurrencyTracker()
-        let wrapped = SlowRecordingProviderClient(
-            provider: .apple,
-            tracker: tracker,
-            delayNanoseconds: 80_000_000
-        )
-        let client = SerializedProviderClient(provider: .apple, wrapped: wrapped)
-
-        async let textCall = client.requestText(
-            request: ProviderTextRequest(prompt: "title"),
-            apiKey: "",
-            model: "apple"
-        )
-        async let densifyCall = client.densify(
-            request: DensificationRequest(
-                inputText: "dense",
-                appName: "App",
-                windowTitle: "Window"
-            ),
-            apiKey: "",
-            model: "apple"
-        )
-
-        _ = try await (textCall, densifyCall)
-
-        let peakConcurrency = await tracker.peakConcurrency()
-        XCTAssertEqual(peakConcurrency, 1)
+    func testProviderWorkLimiterAllowsParallelWorkAcrossDifferentProviders() async {
+        let limiter = ProviderWorkLimiter()
+        let tracker = ProviderPresenceTracker()
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask {
+                _ = await limiter.acquire(provider: .openai, limit: 1)
+                await tracker.beginCall(provider: .openai)
+                try? await Task.sleep(nanoseconds: 80_000_000)
+                await tracker.endCall(provider: .openai)
+                await limiter.release(provider: .openai)
+            }
+            group.addTask {
+                _ = await limiter.acquire(provider: .apple, limit: 1)
+                await tracker.beginCall(provider: .apple)
+                try? await Task.sleep(nanoseconds: 80_000_000)
+                await tracker.endCall(provider: .apple)
+                await limiter.release(provider: .apple)
+            }
+        }
+        let peakCombinedConcurrency = await tracker.peakCombinedConcurrency()
+        XCTAssertEqual(peakCombinedConcurrency, 2)
     }
 }

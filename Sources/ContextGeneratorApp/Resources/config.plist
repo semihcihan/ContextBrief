@@ -10,5 +10,7 @@
     <integer>1</integer>
     <key>forcedProviderFailureChance</key>
     <real>0</real>
+    <key>providerParallelWorkLimitDefault</key>
+    <integer>10</integer>
 </dict>
 </plist>

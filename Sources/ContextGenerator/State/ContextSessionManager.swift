@@ -2,6 +2,7 @@ import Foundation
 
 public final class ContextSessionManager {
     private let repository: ContextRepositorying
+    private let snapshotMutationLock = NSLock()
 
     public init(repository: ContextRepositorying) {
         self.repository = repository
@@ -57,6 +58,10 @@ public final class ContextSessionManager {
         retryCount: Int = 0,
         lastAttemptAt: Date? = nil
     ) throws -> Snapshot {
+        snapshotMutationLock.lock()
+        defer {
+            snapshotMutationLock.unlock()
+        }
         let context = try currentContext()
         let sequence = (try repository.lastSnapshot(in: context.id)?.sequence ?? 0) + 1
         let snapshot = Snapshot(

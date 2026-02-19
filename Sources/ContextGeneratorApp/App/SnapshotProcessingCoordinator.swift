@@ -70,7 +70,7 @@ final class SnapshotProcessingCoordinator {
     private let stateQueue = DispatchQueue(label: "com.contextbrief.processing.state")
     private let captureExecutionQueue = DispatchQueue(label: "com.contextbrief.processing.capture", qos: .userInitiated)
     private let retryExecutionQueue = DispatchQueue(label: "com.contextbrief.processing.retry", qos: .userInitiated)
-    private let captureQueue = CaptureProcessingQueue()
+    private let captureQueue: CaptureProcessingQueue
     private var activeRetryOperations = 0
 
     init(
@@ -78,13 +78,15 @@ final class SnapshotProcessingCoordinator {
         captureWorkflow: CaptureWorkflow,
         retryWorkflow: SnapshotRetryWorkflow,
         sessionManager: ContextSessionManager,
-        repository: ContextRepositorying
+        repository: ContextRepositorying,
+        maxConcurrentCaptureProcesses: Int = SnapshotProcessingCoordinator.defaultMaxConcurrentCaptureProcesses()
     ) {
         self.captureService = captureService
         self.captureWorkflow = captureWorkflow
         self.retryWorkflow = retryWorkflow
         self.sessionManager = sessionManager
         self.repository = repository
+        captureQueue = CaptureProcessingQueue(maxConcurrentCaptures: maxConcurrentCaptureProcesses)
     }
 
     var isCaptureInProgress: Bool {
@@ -156,20 +158,28 @@ final class SnapshotProcessingCoordinator {
 
     func retrySnapshots(_ snapshotIds: [UUID]) async -> RetryBatchResult {
         await withRetryOperationTracking {
-            var succeededCount = 0
-            var failedCount = 0
-            for snapshotId in snapshotIds {
-                do {
-                    _ = try await retrySnapshotInBackground(snapshotId)
-                    succeededCount += 1
-                } catch {
-                    failedCount += 1
-                    AppLogger.error(
-                        "retryFailedSnapshots failed snapshotId=\(snapshotId.uuidString) error=\(error.localizedDescription)"
-                    )
+            let outcomes = await withTaskGroup(of: Bool.self, returning: [Bool].self) { group in
+                for snapshotId in snapshotIds {
+                    group.addTask { [self] in
+                        do {
+                            _ = try await retrySnapshotInBackground(snapshotId)
+                            return true
+                        } catch {
+                            AppLogger.error(
+                                "retryFailedSnapshots failed snapshotId=\(snapshotId.uuidString) error=\(error.localizedDescription)"
+                            )
+                            return false
+                        }
+                    }
                 }
+                var results: [Bool] = []
+                for await outcome in group {
+                    results.append(outcome)
+                }
+                return results
             }
-            return RetryBatchResult(succeeded: succeededCount, failed: failedCount)
+            let succeededCount = outcomes.filter { $0 }.count
+            return RetryBatchResult(succeeded: succeededCount, failed: outcomes.count - succeededCount)
         }
     }
 
@@ -288,5 +298,13 @@ final class SnapshotProcessingCoordinator {
             }
             block(delegate)
         }
+    }
+
+    private static func defaultMaxConcurrentCaptureProcesses() -> Int {
+        let config = DevelopmentConfig.shared
+        let providerLimits = ProviderName.allCases.map { provider in
+            config.providerParallelWorkLimit(for: provider)
+        }
+        return max(1, providerLimits.max() ?? 1)
     }
 }

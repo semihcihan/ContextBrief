@@ -20,12 +20,22 @@ public struct DevelopmentConfig {
     public let thirdPartyContextTitleRefreshEvery: Int
     public let appleContextTitleRefreshEvery: Int
     public let forcedProviderFailureChance: Double
+    public let providerParallelWorkLimitDefault: Int
+    public let providerParallelWorkLimitApple: Int?
+    public let providerParallelWorkLimitOpenAI: Int?
+    public let providerParallelWorkLimitAnthropic: Int?
+    public let providerParallelWorkLimitGemini: Int?
 
     public init(
         enableLocalDebugProvider: Bool? = nil,
         thirdPartyContextTitleRefreshEvery: Int? = nil,
         appleContextTitleRefreshEvery: Int? = nil,
         forcedProviderFailureChance: Double? = nil,
+        providerParallelWorkLimitDefault: Int? = nil,
+        providerParallelWorkLimitApple: Int? = nil,
+        providerParallelWorkLimitOpenAI: Int? = nil,
+        providerParallelWorkLimitAnthropic: Int? = nil,
+        providerParallelWorkLimitGemini: Int? = nil,
         plistURL: URL? = nil,
         appleFoundationAvailableOverride: Bool? = nil
     ) {
@@ -57,6 +67,28 @@ public struct DevelopmentConfig {
                 )
             )
             : 0
+        self.providerParallelWorkLimitDefault = max(
+            1,
+            providerParallelWorkLimitDefault
+                ?? fileOverrides.providerParallelWorkLimitDefault
+                ?? 10
+        )
+        self.providerParallelWorkLimitApple = Self.normalizedParallelWorkLimit(
+            providerParallelWorkLimitApple
+                ?? fileOverrides.providerParallelWorkLimitApple
+        )
+        self.providerParallelWorkLimitOpenAI = Self.normalizedParallelWorkLimit(
+            providerParallelWorkLimitOpenAI
+                ?? fileOverrides.providerParallelWorkLimitOpenAI
+        )
+        self.providerParallelWorkLimitAnthropic = Self.normalizedParallelWorkLimit(
+            providerParallelWorkLimitAnthropic
+                ?? fileOverrides.providerParallelWorkLimitAnthropic
+        )
+        self.providerParallelWorkLimitGemini = Self.normalizedParallelWorkLimit(
+            providerParallelWorkLimitGemini
+                ?? fileOverrides.providerParallelWorkLimitGemini
+        )
     }
 
     public var appleFoundationAvailable: Bool {
@@ -95,6 +127,21 @@ public struct DevelopmentConfig {
             : thirdPartyContextTitleRefreshEvery
     }
 
+    public func providerParallelWorkLimit(for provider: ProviderName) -> Int {
+        let providerOverride: Int?
+        switch provider {
+        case .apple:
+            providerOverride = providerParallelWorkLimitApple
+        case .openai:
+            providerOverride = providerParallelWorkLimitOpenAI
+        case .anthropic:
+            providerOverride = providerParallelWorkLimitAnthropic
+        case .gemini:
+            providerOverride = providerParallelWorkLimitGemini
+        }
+        return max(1, providerOverride ?? providerParallelWorkLimitDefault)
+    }
+
     private static func loadPlistOverrides(plistURL: URL?) -> FileOverrides {
         for path in plistCandidatePaths(plistURL: plistURL) {
             if
@@ -120,6 +167,13 @@ public struct DevelopmentConfig {
         candidates.append(currentDirectoryURL.appendingPathComponent(defaultPlistFileName))
         return candidates
     }
+
+    private static func normalizedParallelWorkLimit(_ value: Int?) -> Int? {
+        guard let value else {
+            return nil
+        }
+        return max(1, value)
+    }
 }
 
 private struct FileOverrides {
@@ -127,24 +181,44 @@ private struct FileOverrides {
     let thirdPartyContextTitleRefreshEvery: Int?
     let appleContextTitleRefreshEvery: Int?
     let forcedProviderFailureChance: Double?
+    let providerParallelWorkLimitDefault: Int?
+    let providerParallelWorkLimitApple: Int?
+    let providerParallelWorkLimitOpenAI: Int?
+    let providerParallelWorkLimitAnthropic: Int?
+    let providerParallelWorkLimitGemini: Int?
 
     static let empty = FileOverrides(
         enableLocalDebugProvider: nil,
         thirdPartyContextTitleRefreshEvery: nil,
         appleContextTitleRefreshEvery: nil,
-        forcedProviderFailureChance: nil
+        forcedProviderFailureChance: nil,
+        providerParallelWorkLimitDefault: nil,
+        providerParallelWorkLimitApple: nil,
+        providerParallelWorkLimitOpenAI: nil,
+        providerParallelWorkLimitAnthropic: nil,
+        providerParallelWorkLimitGemini: nil
     )
 
     init(
         enableLocalDebugProvider: Bool?,
         thirdPartyContextTitleRefreshEvery: Int?,
         appleContextTitleRefreshEvery: Int?,
-        forcedProviderFailureChance: Double?
+        forcedProviderFailureChance: Double?,
+        providerParallelWorkLimitDefault: Int?,
+        providerParallelWorkLimitApple: Int?,
+        providerParallelWorkLimitOpenAI: Int?,
+        providerParallelWorkLimitAnthropic: Int?,
+        providerParallelWorkLimitGemini: Int?
     ) {
         self.enableLocalDebugProvider = enableLocalDebugProvider
         self.thirdPartyContextTitleRefreshEvery = thirdPartyContextTitleRefreshEvery
         self.appleContextTitleRefreshEvery = appleContextTitleRefreshEvery
         self.forcedProviderFailureChance = forcedProviderFailureChance
+        self.providerParallelWorkLimitDefault = providerParallelWorkLimitDefault
+        self.providerParallelWorkLimitApple = providerParallelWorkLimitApple
+        self.providerParallelWorkLimitOpenAI = providerParallelWorkLimitOpenAI
+        self.providerParallelWorkLimitAnthropic = providerParallelWorkLimitAnthropic
+        self.providerParallelWorkLimitGemini = providerParallelWorkLimitGemini
     }
 
     init(dictionary: [String: Any]) {
@@ -152,6 +226,11 @@ private struct FileOverrides {
         thirdPartyContextTitleRefreshEvery = dictionary["thirdPartyContextTitleRefreshEvery"] as? Int
         appleContextTitleRefreshEvery = dictionary["appleContextTitleRefreshEvery"] as? Int
         forcedProviderFailureChance = (dictionary["forcedProviderFailureChance"] as? NSNumber)?.doubleValue
+        providerParallelWorkLimitDefault = dictionary["providerParallelWorkLimitDefault"] as? Int
+        providerParallelWorkLimitApple = dictionary["providerParallelWorkLimitApple"] as? Int
+        providerParallelWorkLimitOpenAI = dictionary["providerParallelWorkLimitOpenAI"] as? Int
+        providerParallelWorkLimitAnthropic = dictionary["providerParallelWorkLimitAnthropic"] as? Int
+        providerParallelWorkLimitGemini = dictionary["providerParallelWorkLimitGemini"] as? Int
     }
 }
 

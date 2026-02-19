@@ -261,4 +261,93 @@ final class ContextSessionManagerTests: XCTestCase {
         )
         XCTAssertTrue(try manager.hasFailedSnapshotsInCurrentContext())
     }
+
+    func testConcurrentAppendSnapshotMaintainsUniqueSequentialOrdering() throws {
+        let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let repo = ContextRepository(rootURL: tempRoot)
+        let manager = ContextSessionManager(repository: repo)
+        let context = try manager.createNewContext(title: "Parallel")
+        let capture = sampleCapture()
+
+        let group = DispatchGroup()
+        let errorLock = NSLock()
+        var failures: [String] = []
+        for _ in 0 ..< 20 {
+            group.enter()
+            DispatchQueue.global(qos: .userInitiated).async {
+                defer {
+                    group.leave()
+                }
+                do {
+                    _ = try manager.appendSnapshot(
+                        rawCapture: capture,
+                        denseContent: "dense",
+                        provider: .openai,
+                        model: "gpt-5-mini"
+                    )
+                } catch {
+                    errorLock.lock()
+                    failures.append(error.localizedDescription)
+                    errorLock.unlock()
+                }
+            }
+        }
+        group.wait()
+
+        XCTAssertTrue(failures.isEmpty)
+        let snapshots = try repo.snapshots(in: context.id)
+        XCTAssertEqual(snapshots.count, 20)
+        XCTAssertEqual(snapshots.map(\.sequence), Array(1 ... 20))
+    }
+
+    func testAppendSnapshotUsesCurrentContextAtSaveTime() throws {
+        let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let repo = ContextRepository(rootURL: tempRoot)
+        let manager = ContextSessionManager(repository: repo)
+        _ = try manager.createNewContext(title: "Old")
+        let newContext = try manager.createNewContext(title: "New")
+        let saved = try manager.appendSnapshot(
+            rawCapture: sampleCapture(),
+            denseContent: "dense",
+            provider: .openai,
+            model: "gpt-5-mini"
+        )
+        XCTAssertEqual(saved.contextId, newContext.id)
+    }
+
+    func testAppendSnapshotRecoversWhenCurrentContextWasDeleted() throws {
+        let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let repo = ContextRepository(rootURL: tempRoot)
+        let manager = ContextSessionManager(repository: repo)
+        let deletedContext = try manager.createNewContext(title: "Delete Me")
+        _ = try manager.deleteContextToTrash(deletedContext.id)
+
+        let saved = try manager.appendSnapshot(
+            rawCapture: sampleCapture(),
+            denseContent: "dense",
+            provider: .openai,
+            model: "gpt-5-mini"
+        )
+        XCTAssertNotEqual(saved.contextId, deletedContext.id)
+        XCTAssertTrue(try repo.context(id: saved.contextId) != nil)
+    }
+
+    private func sampleCapture() -> CapturedSnapshot {
+        CapturedSnapshot(
+            sourceType: .desktopApp,
+            appName: "Notes",
+            bundleIdentifier: "com.apple.Notes",
+            windowTitle: "Notes",
+            captureMethod: .accessibility,
+            accessibilityText: "abc",
+            ocrText: "",
+            combinedText: "abc",
+            diagnostics: CaptureDiagnostics(
+                accessibilityLineCount: 1,
+                ocrLineCount: 0,
+                processingDurationMs: 40,
+                usedFallbackOCR: false
+            )
+        )
+    }
 }

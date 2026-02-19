@@ -16,39 +16,48 @@ final class CaptureProcessingQueue {
         case startNext(request: QueuedCaptureRequest, remainingQueued: Int)
     }
 
-    private(set) var isCaptureInProgress = false
+    private let maxConcurrentCaptures: Int
+    private(set) var activeCaptureCount = 0
     private var queuedRequests: [QueuedCaptureRequest] = []
+
+    init(maxConcurrentCaptures: Int = 1) {
+        self.maxConcurrentCaptures = max(1, maxConcurrentCaptures)
+    }
+
+    var isCaptureInProgress: Bool {
+        activeCaptureCount > 0
+    }
 
     var queuedCount: Int {
         queuedRequests.count
     }
 
     func requestCapture(_ request: QueuedCaptureRequest) -> RequestResult {
-        if isCaptureInProgress {
+        if activeCaptureCount >= maxConcurrentCaptures {
             queuedRequests.append(request)
             return .queued(count: queuedRequests.count)
         }
-        isCaptureInProgress = true
+        activeCaptureCount += 1
         return .startNow(request: request)
     }
 
     func markCurrentCaptureDidNotStart() {
-        isCaptureInProgress = false
+        activeCaptureCount = max(0, activeCaptureCount - 1)
     }
 
     func completeCurrentCapture() -> CompletionResult {
-        isCaptureInProgress = false
-        guard !queuedRequests.isEmpty else {
+        activeCaptureCount = max(0, activeCaptureCount - 1)
+        guard activeCaptureCount < maxConcurrentCaptures, !queuedRequests.isEmpty else {
             return .idle
         }
         let nextRequest = queuedRequests.removeFirst()
-        isCaptureInProgress = true
+        activeCaptureCount += 1
         return .startNext(request: nextRequest, remainingQueued: queuedRequests.count)
     }
 
     @discardableResult
     func dropQueuedCapturesAfterRejectedStart() -> Int {
-        isCaptureInProgress = false
+        activeCaptureCount = max(0, activeCaptureCount - 1)
         let droppedCount = queuedRequests.count
         queuedRequests.removeAll()
         return droppedCount

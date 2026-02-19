@@ -16,13 +16,4 @@ public extension ProviderName {
             return true
         }
     }
-
-    var serializeProviderCalls: Bool {
-        switch self {
-        case .apple:
-            return true
-        case .openai, .anthropic, .gemini:
-            return false
-        }
-    }
 }

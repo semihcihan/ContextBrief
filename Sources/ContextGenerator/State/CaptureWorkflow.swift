@@ -85,7 +85,7 @@ public final class CaptureWorkflow {
             try repository.saveScreenshotData(screenshotData, snapshotId: snapshot.id)
         }
 
-        let context = try sessionManager.currentContext()
+        let context = try repository.context(id: snapshot.contextId) ?? sessionManager.currentContext()
         return CaptureWorkflowResult(
             context: context,
             snapshot: snapshot,
