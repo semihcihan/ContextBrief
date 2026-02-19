@@ -351,10 +351,10 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
             {
                 let alert = NSAlert()
                 alert.messageText = "Start a new context?"
-                alert.informativeText = "It has been more than \(inactivityPromptMinutes) minutes since the last snapshot. Save this snapshot to a new context or keep it in the current context."
+                alert.informativeText = "Save this snapshot to a new context or keep it in the current context."
                 alert.alertStyle = .informational
                 alert.addButton(withTitle: "Save to New Context")
-                alert.addButton(withTitle: "Save to Current Context")
+                alert.addButton(withTitle: "Keep in Current Context")
                 if alert.runModal() == .alertFirstButtonReturn {
                     let context = try sessionManager.createNewContext(title: "New Context")
                     AppLogger.debug(
