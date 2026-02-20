@@ -3,7 +3,8 @@ import XCTest
 
 private final class MockDensifier: Densifying {
     func densify(snapshot: CapturedSnapshot, provider: ProviderName, model: String, apiKey: String) async throws -> String {
-        "dense-output"
+        XCTAssertEqual(provider, .codex)
+        return "dense-output"
     }
 }
 
@@ -11,6 +12,7 @@ private final class FlakyDensifier: Densifying {
     private(set) var calls = 0
 
     func densify(snapshot: CapturedSnapshot, provider: ProviderName, model: String, apiKey: String) async throws -> String {
+        XCTAssertEqual(provider, .codex)
         calls += 1
         if calls == 1 {
             throw AppError.providerRequestFailed("temporary provider error")
@@ -21,6 +23,7 @@ private final class FlakyDensifier: Densifying {
 
 private final class AlwaysFailingDensifier: Densifying {
     func densify(snapshot: CapturedSnapshot, provider: ProviderName, model: String, apiKey: String) async throws -> String {
+        XCTAssertEqual(provider, .codex)
         throw AppError.providerRequestFailed("provider unavailable")
     }
 }
@@ -55,10 +58,9 @@ final class CaptureWorkflowTests: XCTestCase {
 
         var state = try repo.appState()
         state.onboardingCompleted = true
-        state.selectedProvider = .openai
+        state.selectedProvider = .codex
         state.selectedModel = "demo-model"
         try repo.saveAppState(state)
-        try keychain.set("secret", for: "api.openai")
 
         _ = try manager.createNewContext(title: "Current")
         let result = try await workflow.runCapture(
@@ -84,10 +86,9 @@ final class CaptureWorkflowTests: XCTestCase {
 
         var state = try repo.appState()
         state.onboardingCompleted = true
-        state.selectedProvider = .openai
+        state.selectedProvider = .codex
         state.selectedModel = "demo-model"
         try repo.saveAppState(state)
-        try keychain.set("secret", for: "api.openai")
         _ = try manager.createNewContext(title: "Current")
 
         let result = try await workflow.runCapture(
@@ -115,10 +116,9 @@ final class CaptureWorkflowTests: XCTestCase {
 
         var state = try repo.appState()
         state.onboardingCompleted = true
-        state.selectedProvider = .openai
+        state.selectedProvider = .codex
         state.selectedModel = "demo-model"
         try repo.saveAppState(state)
-        try keychain.set("secret", for: "api.openai")
         _ = try manager.createNewContext(title: "Current")
 
         let result = try await workflow.runCapture(

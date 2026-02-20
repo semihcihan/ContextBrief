@@ -44,11 +44,11 @@ final class ProviderClientSerializationTests: XCTestCase {
         await withTaskGroup(of: Void.self) { group in
             for _ in 0 ..< 6 {
                 group.addTask {
-                    _ = await limiter.acquire(provider: .openai, limit: 2)
+                    _ = await limiter.acquire(provider: .codex, limit: 2)
                     await tracker.beginCall()
                     try? await Task.sleep(nanoseconds: 40_000_000)
                     await tracker.endCall()
-                    await limiter.release(provider: .openai)
+                    await limiter.release(provider: .codex)
                 }
             }
         }
@@ -61,18 +61,18 @@ final class ProviderClientSerializationTests: XCTestCase {
         let tracker = ProviderPresenceTracker()
         await withTaskGroup(of: Void.self) { group in
             group.addTask {
-                _ = await limiter.acquire(provider: .openai, limit: 1)
-                await tracker.beginCall(provider: .openai)
+                _ = await limiter.acquire(provider: .codex, limit: 1)
+                await tracker.beginCall(provider: .codex)
                 try? await Task.sleep(nanoseconds: 80_000_000)
-                await tracker.endCall(provider: .openai)
-                await limiter.release(provider: .openai)
+                await tracker.endCall(provider: .codex)
+                await limiter.release(provider: .codex)
             }
             group.addTask {
-                _ = await limiter.acquire(provider: .apple, limit: 1)
-                await tracker.beginCall(provider: .apple)
+                _ = await limiter.acquire(provider: .gemini, limit: 1)
+                await tracker.beginCall(provider: .gemini)
                 try? await Task.sleep(nanoseconds: 80_000_000)
-                await tracker.endCall(provider: .apple)
-                await limiter.release(provider: .apple)
+                await tracker.endCall(provider: .gemini)
+                await limiter.release(provider: .gemini)
             }
         }
         let peakCombinedConcurrency = await tracker.peakCombinedConcurrency()

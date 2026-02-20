@@ -252,13 +252,13 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
 
             if !setupReady {
                 if !state.onboardingCompleted {
-                    setupStatusMenuItem?.title = "Setup required: provider, model and API key"
+                    setupStatusMenuItem?.title = "Setup required: CLI tool"
                 } else if !hasPermissions {
                     setupStatusMenuItem?.title = "Permissions required: Accessibility + Screen Recording"
                 } else if !hasProviderConfiguration {
-                    setupStatusMenuItem?.title = "Setup required: provider, model and API key"
+                    setupStatusMenuItem?.title = "Setup required: CLI tool"
                 } else {
-                    setupStatusMenuItem?.title = "Setup required: provider, model and API key"
+                    setupStatusMenuItem?.title = "Setup required: CLI tool"
                 }
             } else {
                 setupStatusMenuItem?.title = "Setup required"
@@ -362,7 +362,7 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
                 return false
             }
             guard hasProviderConfiguration() else {
-                AppLogger.debug("captureContext blocked: provider configuration missing")
+                AppLogger.debug("captureContext blocked: CLI configuration missing")
                 eventTracker.track(.captureBlocked, parameters: ["reason": "provider_not_configured", "source": source])
                 presentSettings(source: "capture_blocked")
                 return false
@@ -793,26 +793,20 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
     private func configuredModelConfig(forTitleGeneration: Bool = false) throws -> ModelConfig? {
         let developmentConfig = DevelopmentConfig.shared
         let state = try appStateService.state()
-        guard let selectedProvider = state.selectedProvider else {
-            AppLogger.debug("configuredModelConfig unavailable: provider/model missing")
+        guard
+            let selectedProvider = state.selectedProvider,
+            selectedProvider.isCLIProvider
+        else {
+            AppLogger.debug("configuredModelConfig unavailable: CLI tool missing")
             return nil
         }
         let provider = forTitleGeneration
             ? developmentConfig.providerForTitleGeneration(selectedProvider: selectedProvider)
             : developmentConfig.providerForDensification(selectedProvider: selectedProvider)
-        let requiresCredentials = developmentConfig.requiresCredentials(for: provider)
         let model = state.selectedModel ?? ""
-        guard !requiresCredentials || !model.isEmpty else {
-            AppLogger.debug("configuredModelConfig unavailable: model missing for provider=\(provider.rawValue)")
-            return nil
-        }
         let apiKey = try keychain.get("api.\(provider.rawValue)") ?? ""
-        guard !requiresCredentials || !apiKey.isEmpty else {
-            AppLogger.debug("configuredModelConfig unavailable: key missing for provider=\(provider.rawValue)")
-            return nil
-        }
         AppLogger.debug(
-            "configuredModelConfig available selectedProvider=\(selectedProvider.rawValue) effectiveProvider=\(provider.rawValue) model=\(model)"
+            "configuredModelConfig available selectedCLI=\(selectedProvider.rawValue) effectiveProvider=\(provider.rawValue) model=\(model)"
         )
         return ModelConfig(provider: provider, model: model, apiKey: apiKey)
     }

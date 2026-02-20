@@ -15,7 +15,7 @@ private actor ProviderRequestAttemptCounter {
 }
 
 private struct ContextWindowMockProviderClient: ProviderClient {
-    let provider: ProviderName = .openai
+    let provider: ProviderName = .codex
     let maxPromptCharacters: Int
     let contextWindowErrorMessage: String
     let counter: ProviderRequestAttemptCounter
@@ -30,7 +30,7 @@ private struct ContextWindowMockProviderClient: ProviderClient {
 }
 
 private struct NonContextFailureMockProviderClient: ProviderClient {
-    let provider: ProviderName = .openai
+    let provider: ProviderName = .codex
     let counter: ProviderRequestAttemptCounter
     let message: String
 

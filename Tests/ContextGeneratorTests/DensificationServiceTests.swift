@@ -2,7 +2,7 @@ import ContextGenerator
 import XCTest
 
 private final class RecordingProviderClient: ProviderClient {
-    let provider: ProviderName = .openai
+    let provider: ProviderName = .codex
     var densificationRequests: [DensificationRequest] = []
     var nextResponse: String
 
@@ -22,10 +22,9 @@ private final class RecordingProviderClient: ProviderClient {
 
 final class DensificationServiceTests: XCTestCase {
     func testProviderFactoryReturnsClient() {
-        XCTAssertNotNil(ProviderClientFactory.make(provider: .openai))
-        XCTAssertNotNil(ProviderClientFactory.make(provider: .anthropic))
+        XCTAssertNotNil(ProviderClientFactory.make(provider: .codex))
+        XCTAssertNotNil(ProviderClientFactory.make(provider: .claude))
         XCTAssertNotNil(ProviderClientFactory.make(provider: .gemini))
-        XCTAssertNotNil(ProviderClientFactory.make(provider: .apple))
     }
 
     func testDensifyUsesFilteredCombinedTextWhenAvailable() async throws {
@@ -42,7 +41,7 @@ final class DensificationServiceTests: XCTestCase {
 
         _ = try await service.densify(
             snapshot: snapshot,
-            provider: .openai,
+            provider: .codex,
             model: "test-model",
             apiKey: "key"
         )
@@ -65,7 +64,7 @@ final class DensificationServiceTests: XCTestCase {
 
         _ = try await service.densify(
             snapshot: snapshot,
-            provider: .openai,
+            provider: .codex,
             model: "test-model",
             apiKey: "key"
         )
@@ -88,7 +87,7 @@ final class DensificationServiceTests: XCTestCase {
 
         let output = try await service.densify(
             snapshot: snapshot,
-            provider: .openai,
+            provider: .codex,
             model: "test-model",
             apiKey: "key"
         )
