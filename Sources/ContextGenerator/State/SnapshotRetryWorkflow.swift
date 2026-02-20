@@ -28,19 +28,13 @@ public final class SnapshotRetryWorkflow {
         }
         guard
             let providerRawValue = snapshot.provider,
-            let provider = ProviderName(rawValue: providerRawValue)
+            let provider = ProviderName(rawValue: providerRawValue),
+            provider.isCLIProvider
         else {
             throw AppError.providerNotConfigured
         }
         let model = snapshot.model ?? ""
-        let requiresCredentials = DevelopmentConfig.shared.requiresCredentials(for: provider)
-        guard !requiresCredentials || !model.isEmpty else {
-            throw AppError.providerNotConfigured
-        }
         let apiKey = try keychain.get("api.\(provider.rawValue)") ?? ""
-        guard !requiresCredentials || !apiKey.isEmpty else {
-            throw AppError.keyNotConfigured
-        }
 
         let nextRetryCount = snapshot.retryCount + 1
         let attemptedAt = Date()

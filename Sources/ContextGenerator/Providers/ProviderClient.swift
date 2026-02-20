@@ -1,9 +1,5 @@
 import Foundation
 
-#if canImport(FoundationModels)
-import FoundationModels
-#endif
-
 public struct DensificationRequest {
     public let inputText: String
     public let appName: String
@@ -455,15 +451,14 @@ private extension ProviderClient {
 
 public enum ProviderClientFactory {
     public static func make(provider: ProviderName, session: URLSession = .shared) -> ProviderClient {
+        _ = session
         switch provider {
-        case .openai:
-            return OpenAIProviderClient(session: session)
-        case .anthropic:
-            return AnthropicProviderClient(session: session)
+        case .codex:
+            return CodexCLIProviderClient()
+        case .claude:
+            return ClaudeCLIProviderClient()
         case .gemini:
-            return GeminiProviderClient(session: session)
-        case .apple:
-            return AppleFoundationProviderClient()
+            return GeminiCLIProviderClient()
         }
     }
 }
@@ -473,7 +468,7 @@ private let localDebugResponseDelayNanoseconds: UInt64 = 3_000_000_000
 private let localDebugDensificationCharacterLimit = 200
 private let densificationSystemInstruction = "You produce concise, complete context with no missing key information."
 private let densificationMinimumChunkInputTokens = 320
-private let appleContextWindowTokenLimit = 4_096
+private let smallContextWindowTokenLimit = 4_096
 private let reactiveContextWindowTokenLimit = 100_000
 private let densificationPromptTargetWordLimitPlaceholder = 260
 private let densificationOutputReserveRatio = 0.24
@@ -493,8 +488,6 @@ private let densificationMaximumMergeTargetWordLimit = 520
 private let densificationSystemInstructionTokenCount = TokenCountEstimator.estimate(
     for: ProviderTextRequest(systemInstruction: densificationSystemInstruction, prompt: "").systemInstruction ?? ""
 )
-private let appleContextWindowExceededMessage = "Context Window Size Exceeded. Apple Foundation Models allow up to 4,096 tokens per session (including instructions, input, and output). Start a new session and retry with shorter input or output."
-
 private func densificationOutputReserveTokens(for contextWindowTokens: Int) -> Int {
     let ratioBased = Int(Double(contextWindowTokens) * densificationOutputReserveRatio)
     return min(
@@ -512,7 +505,7 @@ private func densificationSafetyMarginTokens(for contextWindowTokens: Int) -> In
 }
 
 private func densificationInputUtilizationRatio(for contextWindowTokens: Int) -> Double {
-    contextWindowTokens <= appleContextWindowTokenLimit
+    contextWindowTokens <= smallContextWindowTokenLimit
         ? densificationSmallContextInputUtilizationRatio
         : densificationLargeContextInputUtilizationRatio
 }
@@ -605,71 +598,191 @@ private func withProviderWorkPermit<T>(
     }
 }
 
-private func providerRequestErrorMessage(from data: Data, fallback: String) -> String {
-    guard
-        let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-    else {
-        return fallback
-    }
-    if let error = json["error"] as? [String: Any] {
-        if let message = error["message"] as? String, !message.isEmpty {
-            return message
-        }
-        if let details = error["details"] as? [[String: Any]],
-           let detailMessage = details.first?["message"] as? String,
-           !detailMessage.isEmpty
-        {
-            return detailMessage
-        }
-    }
-    if let message = json["message"] as? String, !message.isEmpty {
-        return message
-    }
-    return fallback
+private struct CLICommandResult {
+    let stdout: String
+    let stderr: String
 }
 
-private func validatedResponseData(
-    _ data: Data,
-    _ response: URLResponse,
-    providerName: String
-) throws -> Data {
-    guard let httpResponse = response as? HTTPURLResponse else {
-        throw AppError.providerRequestFailed("Unexpected response from \(providerName) API.")
+private extension String {
+    var nonEmpty: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
-    guard (200 ... 299).contains(httpResponse.statusCode) else {
-        let fallback = "Request to \(providerName) failed with status \(httpResponse.statusCode)."
-        let details = providerRequestErrorMessage(from: data, fallback: fallback)
+}
+
+private func promptTextForCLI(_ request: ProviderTextRequest) -> String {
+    if
+        let systemInstruction = request.systemInstruction?.trimmingCharacters(in: .whitespacesAndNewlines),
+        !systemInstruction.isEmpty
+    {
+        return "\(systemInstruction)\n\n\(request.prompt)"
+    }
+    return request.prompt
+}
+
+private func resolveCLIBinary(for provider: ProviderName) -> String {
+    let environment = ProcessInfo.processInfo.environment
+    switch provider {
+    case .codex:
+        return environment["CODEX_PATH"]?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? "codex"
+    case .claude:
+        return environment["CLAUDE_PATH"]?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? "claude"
+    case .gemini:
+        return environment["GEMINI_PATH"]?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? "gemini"
+    }
+}
+
+private func runCLICommand(
+    binary: String,
+    arguments: [String],
+    input: String?,
+    timeoutSeconds: TimeInterval = providerRequestTimeoutSeconds
+) async throws -> CLICommandResult {
+    try await withCheckedThrowingContinuation { continuation in
+        let process = Process()
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        let stdinPipe = Pipe()
+        let stateLock = NSLock()
+        var timeoutTriggered = false
+        var continuationResumed = false
+
+        func resumeOnce(result: Result<CLICommandResult, Error>) {
+            stateLock.lock()
+            defer {
+                stateLock.unlock()
+            }
+            guard !continuationResumed else {
+                return
+            }
+            continuationResumed = true
+            continuation.resume(with: result)
+        }
+
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
+        process.standardInput = stdinPipe
+
+        var processArguments = arguments
+        if binary.contains("/") {
+            process.executableURL = URL(fileURLWithPath: binary)
+        } else {
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            processArguments.insert(binary, at: 0)
+        }
+        process.arguments = processArguments
+
+        let timeoutWorkItem = DispatchWorkItem {
+            stateLock.lock()
+            timeoutTriggered = true
+            stateLock.unlock()
+            if process.isRunning {
+                process.terminate()
+            }
+        }
+
+        process.terminationHandler = { terminatedProcess in
+            timeoutWorkItem.cancel()
+            let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+            let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+            let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
+            let stderr = String(data: stderrData, encoding: .utf8) ?? ""
+            let stderrTrimmed = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+            let stdoutTrimmed = stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            stateLock.lock()
+            let didTimeout = timeoutTriggered
+            stateLock.unlock()
+
+            if didTimeout {
+                resumeOnce(
+                    result: .failure(
+                        AppError.providerRequestFailed(
+                            "CLI command timed out after \(Int(timeoutSeconds)) seconds."
+                        )
+                    )
+                )
+                return
+            }
+
+            guard terminatedProcess.terminationStatus == 0 else {
+                let details = stderrTrimmed.nonEmpty ?? stdoutTrimmed.nonEmpty ?? "CLI command failed."
+                resumeOnce(result: .failure(AppError.providerRequestFailed(details)))
+                return
+            }
+
+            resumeOnce(result: .success(CLICommandResult(stdout: stdout, stderr: stderr)))
+        }
+
+        do {
+            try process.run()
+        } catch {
+            resumeOnce(
+                result: .failure(
+                    AppError.providerRequestFailed(
+                        "Unable to start CLI command \(binary): \(error.localizedDescription)"
+                    )
+                )
+            )
+            return
+        }
+
         if
-            let signal = providerErrorSignal(from: data),
-            isContextWindowExceededSignal(signal),
-            !isContextWindowExceededSignal(details)
+            let input,
+            let inputData = input.data(using: .utf8)
         {
-            throw AppError.providerRequestFailed("Context window exceeded. \(details)")
+            stdinPipe.fileHandleForWriting.write(inputData)
         }
-        throw AppError.providerRequestFailed(details)
+        stdinPipe.fileHandleForWriting.closeFile()
+
+        DispatchQueue.global(qos: .userInitiated)
+            .asyncAfter(deadline: .now() + timeoutSeconds, execute: timeoutWorkItem)
     }
-    return data
 }
 
-private func requestData(
-    session: URLSession,
-    request: URLRequest,
-    providerName: String
-) async throws -> Data {
-    do {
-        let (data, response) = try await session.data(for: request)
-        return try validatedResponseData(data, response, providerName: providerName)
-    } catch let appError as AppError {
-        throw appError
-    } catch let urlError as URLError where urlError.code == .timedOut {
-        throw AppError.providerRequestFailed(
-            "\(providerName) request timed out. Check network access and try again."
-        )
-    } catch {
-        throw AppError.providerRequestFailed(
-            "Unable to reach \(providerName) API: \(error.localizedDescription)"
-        )
+private func parseJSONPayload(from rawOutput: String) -> [String: Any]? {
+    let trimmed = rawOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else {
+        return nil
     }
+    if
+        trimmed.first == "{",
+        let data = trimmed.data(using: .utf8),
+        let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    {
+        return payload
+    }
+    let lines = trimmed
+        .split(whereSeparator: \.isNewline)
+        .map(String.init)
+        .reversed()
+    for line in lines {
+        let normalized = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalized.first == "{" else {
+            continue
+        }
+        guard
+            let data = normalized.data(using: .utf8),
+            let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            continue
+        }
+        return payload
+    }
+    return nil
+}
+
+private func extractCLIText(from payload: [String: Any]) -> String? {
+    let keys = ["result", "response", "output", "message", "text"]
+    for key in keys {
+        if
+            let value = payload[key] as? String,
+            !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
+            return value.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+    }
+    return nil
 }
 
 private func densificationPrompt(for request: DensificationRequest) -> String {
@@ -684,59 +797,6 @@ private func densificationPrompt(for request: DensificationRequest) -> String {
 
 private func localDebugPrefixText(_ value: String, maxCharacters: Int) -> String {
     String(value.prefix(maxCharacters))
-}
-
-private func providerErrorSignal(from data: Data) -> String? {
-    guard
-        let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-    else {
-        return nil
-    }
-
-    var parts: [String] = []
-    func appendField(_ raw: Any?) {
-        guard let raw else {
-            return
-        }
-        let value: String
-        if let stringValue = raw as? String {
-            value = stringValue
-        } else {
-            value = String(describing: raw)
-        }
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            return
-        }
-        parts.append(trimmed)
-    }
-
-    if let error = json["error"] as? [String: Any] {
-        appendField(error["message"])
-        appendField(error["type"])
-        appendField(error["code"])
-        appendField(error["status"])
-        if let details = error["details"] as? [[String: Any]] {
-            for detail in details {
-                appendField(detail["message"])
-                appendField(detail["reason"])
-                appendField(detail["code"])
-                appendField(detail["status"])
-                appendField(detail["@type"])
-            }
-        }
-    }
-
-    appendField(json["message"])
-    appendField(json["status"])
-    appendField(json["error_description"])
-
-    let signal = parts.joined(separator: " ")
-        .trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !signal.isEmpty else {
-        return nil
-    }
-    return signal
 }
 
 private func isContextWindowExceededError(_ error: Error) -> Bool {
@@ -805,229 +865,158 @@ private func isContextWindowExceededSignal(_ rawSignal: String) -> Bool {
     return hasTokenLanguage && hasPromptLanguage && hasWindowLanguage && hasExceededLanguage
 }
 
-private struct OpenAIProviderClient: ProviderClient {
-    let provider: ProviderName = .openai
-    let session: URLSession
+private struct CodexCLIProviderClient: ProviderClient {
+    let provider: ProviderName = .codex
 
     func requestText(request: ProviderTextRequest, apiKey: String, model: String) async throws -> String {
         try await withProviderWorkPermit(provider: provider, operationName: "request_text") {
-            let endpoint = URL(string: "https://api.openai.com/v1/chat/completions")!
-            var urlRequest = URLRequest(url: endpoint)
-            urlRequest.httpMethod = "POST"
-            urlRequest.timeoutInterval = providerRequestTimeoutSeconds
-            urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-            urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-            var messages: [[String: Any]] = []
-            if
-                let systemInstruction = request.systemInstruction?.trimmingCharacters(in: .whitespacesAndNewlines),
-                !systemInstruction.isEmpty
-            {
-                messages.append(["role": "system", "content": systemInstruction])
+            let prompt = promptTextForCLI(request)
+            let temporaryDirectory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("contextbrief-codex-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+            defer {
+                try? FileManager.default.removeItem(at: temporaryDirectory)
             }
-            messages.append(["role": "user", "content": request.prompt])
+            let outputPath = temporaryDirectory.appendingPathComponent("last-message.txt")
 
-            let body: [String: Any] = [
-                "model": model,
-                "messages": messages
+            var arguments = [
+                "exec",
+                "--skip-git-repo-check",
+                "--json",
+                "--output-last-message", outputPath.path,
+                "--ask-for-approval", "never",
+                "--sandbox", "read-only",
+                "-"
             ]
-            urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-            let validatedData = try await requestData(session: session, request: urlRequest, providerName: "OpenAI")
-            let json = try JSONSerialization.jsonObject(with: validatedData) as? [String: Any]
-            let choices = json?["choices"] as? [[String: Any]]
-            let message = choices?.first?["message"] as? [String: Any]
-            let content = message?["content"] as? String
-            guard let text = content?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
-                throw AppError.providerRequestFailed("OpenAI returned an empty response. Check model and account status.")
+            let normalizedModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !normalizedModel.isEmpty {
+                arguments.insert(contentsOf: ["-m", normalizedModel], at: 1)
             }
+
+            let result = try await runCLICommand(
+                binary: resolveCLIBinary(for: provider),
+                arguments: arguments,
+                input: prompt
+            )
+
+            if
+                let fileText = try? String(contentsOf: outputPath, encoding: .utf8)
+                    .trimmingCharacters(in: .whitespacesAndNewlines),
+                !fileText.isEmpty
+            {
+                return fileText
+            }
+
+            if
+                let payload = parseJSONPayload(from: result.stdout),
+                let jsonText = extractCLIText(from: payload)
+            {
+                return jsonText
+            }
+            guard let fallback = result.stdout.nonEmpty else {
+                throw AppError.providerRequestFailed("Codex CLI returned an empty response.")
+            }
+            return fallback
+        }
+    }
+}
+
+private struct ClaudeCLIProviderClient: ProviderClient {
+    let provider: ProviderName = .claude
+
+    func requestText(request: ProviderTextRequest, apiKey: String, model: String) async throws -> String {
+        try await withProviderWorkPermit(provider: provider, operationName: "request_text") {
+            let prompt = promptTextForCLI(request)
+            var arguments = [
+                "-p", prompt,
+                "--output-format", "json"
+            ]
+            let normalizedModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !normalizedModel.isEmpty {
+                arguments.append(contentsOf: ["--model", normalizedModel])
+            }
+            let result = try await runCLICommand(
+                binary: resolveCLIBinary(for: provider),
+                arguments: arguments,
+                input: nil
+            )
+            if
+                let payload = parseJSONPayload(from: result.stdout),
+                let text = extractCLIText(from: payload)
+            {
+                return text
+            }
+            guard let fallback = result.stdout.nonEmpty else {
+                throw AppError.providerRequestFailed("Claude CLI returned an empty response.")
+            }
+            return fallback
+        }
+    }
+}
+
+private struct GeminiCLIProviderClient: ProviderClient {
+    let provider: ProviderName = .gemini
+
+    func requestText(request: ProviderTextRequest, apiKey: String, model: String) async throws -> String {
+        try await withProviderWorkPermit(provider: provider, operationName: "request_text") {
+            let prompt = promptTextForCLI(request)
+            let normalizedModel = normalizedGeminiCLIModel(model)
+            do {
+                return try await runGeminiCommand(prompt: prompt, model: normalizedModel)
+            } catch {
+                guard !normalizedModel.isEmpty, isGeminiModelNotFoundError(error) else {
+                    throw error
+                }
+                return try await runGeminiCommand(prompt: prompt, model: "")
+            }
+        }
+    }
+
+    private func runGeminiCommand(prompt: String, model: String) async throws -> String {
+        var arguments = [
+            "--output-format", "json",
+            "--prompt", prompt
+        ]
+        if !model.isEmpty {
+            arguments.append(contentsOf: ["--model", model])
+        }
+        let result = try await runCLICommand(
+            binary: resolveCLIBinary(for: provider),
+            arguments: arguments,
+            input: nil
+        )
+        if
+            let payload = parseJSONPayload(from: result.stdout),
+            let text = extractCLIText(from: payload)
+        {
             return text
         }
+        guard let fallback = result.stdout.nonEmpty else {
+            throw AppError.providerRequestFailed("Gemini CLI returned an empty response.")
+        }
+        return fallback
     }
 }
 
-private struct AnthropicProviderClient: ProviderClient {
-    let provider: ProviderName = .anthropic
-    let session: URLSession
-
-    func requestText(request: ProviderTextRequest, apiKey: String, model: String) async throws -> String {
-        try await withProviderWorkPermit(provider: provider, operationName: "request_text") {
-            let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
-            var urlRequest = URLRequest(url: endpoint)
-            urlRequest.httpMethod = "POST"
-            urlRequest.timeoutInterval = providerRequestTimeoutSeconds
-            urlRequest.setValue(apiKey, forHTTPHeaderField: "x-api-key")
-            urlRequest.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-            urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-            var body: [String: Any] = [
-                "model": model,
-                "max_tokens": 1400,
-                "messages": [
-                    [
-                        "role": "user",
-                        "content": request.prompt
-                    ]
-                ]
-            ]
-            if
-                let systemInstruction = request.systemInstruction?.trimmingCharacters(in: .whitespacesAndNewlines),
-                !systemInstruction.isEmpty
-            {
-                body["system"] = systemInstruction
-            }
-            urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-            let validatedData = try await requestData(session: session, request: urlRequest, providerName: "Anthropic")
-            let json = try JSONSerialization.jsonObject(with: validatedData) as? [String: Any]
-            let content = json?["content"] as? [[String: Any]]
-            let text = content?.first?["text"] as? String
-            guard let normalized = text?.trimmingCharacters(in: .whitespacesAndNewlines), !normalized.isEmpty else {
-                throw AppError.providerRequestFailed("Anthropic returned an empty response. Check model and account status.")
-            }
-            return normalized
-        }
+private func normalizedGeminiCLIModel(_ model: String) -> String {
+    let normalizedModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
+    switch normalizedModel {
+    case "gemini-flash-latest":
+        return "gemini-2.5-flash"
+    default:
+        return normalizedModel
     }
 }
 
-private struct GeminiProviderClient: ProviderClient {
-    let provider: ProviderName = .gemini
-    let session: URLSession
-
-    func requestText(request: ProviderTextRequest, apiKey: String, model: String) async throws -> String {
-        try await withProviderWorkPermit(provider: provider, operationName: "request_text") {
-            let endpoint = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(model):generateContent?key=\(apiKey)")!
-            var urlRequest = URLRequest(url: endpoint)
-            urlRequest.httpMethod = "POST"
-            urlRequest.timeoutInterval = providerRequestTimeoutSeconds
-            urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-            var body: [String: Any] = [
-                "contents": [
-                    [
-                        "parts": [
-                            ["text": request.prompt]
-                        ]
-                    ]
-                ]
-            ]
-            if
-                let systemInstruction = request.systemInstruction?.trimmingCharacters(in: .whitespacesAndNewlines),
-                !systemInstruction.isEmpty
-            {
-                body["system_instruction"] = ["parts": [["text": systemInstruction]]]
-            }
-            urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-            let validatedData = try await requestData(session: session, request: urlRequest, providerName: "Gemini")
-            let json = try JSONSerialization.jsonObject(with: validatedData) as? [String: Any]
-            let candidates = json?["candidates"] as? [[String: Any]]
-            let content = candidates?.first?["content"] as? [String: Any]
-            let parts = content?["parts"] as? [[String: Any]]
-            let text = parts?.first?["text"] as? String
-            guard let normalized = text?.trimmingCharacters(in: .whitespacesAndNewlines), !normalized.isEmpty else {
-                throw AppError.providerRequestFailed("Gemini returned an empty response. Check model and account status.")
-            }
-            return normalized
-        }
+private func isGeminiModelNotFoundError(_ error: Error) -> Bool {
+    guard case let .providerRequestFailed(details) = error as? AppError else {
+        return false
     }
+    let signal = details.lowercased()
+    return signal.contains("modelnotfounderror")
+        || signal.contains("requested entity was not found")
+        || signal.contains("\"code\": 404")
 }
-
-private struct AppleFoundationProviderClient: ProviderClient {
-    let provider: ProviderName = .apple
-
-    func densify(request: DensificationRequest, apiKey: String, model: String) async throws -> String {
-        let startedAt = Date()
-        try await forceFailure()
-        if DevelopmentConfig.shared.localDebugResponsesEnabled {
-            AppLogger.debug("Local debug response enabled.")
-            try await Task.sleep(nanoseconds: localDebugResponseDelayNanoseconds)
-            let output = localDebugPrefixText(request.inputText, maxCharacters: localDebugDensificationCharacterLimit)
-            AppLogger.debug(
-                "Densification completed [provider=\(provider.rawValue) runs=1 chunked=false seconds=\(formattedElapsedSeconds(since: startedAt))]"
-            )
-            return output
-        }
-
-#if canImport(FoundationModels)
-        if #available(macOS 26.0, *) {
-            guard SystemLanguageModel.default.availability == .available else {
-                throw AppError.providerRequestFailed(
-                    "Apple Foundation Models are not available on this Mac."
-                )
-            }
-
-            let stats = DensificationDebugStats()
-            let output = try await densifyWithAdaptiveChunking(
-                request: request,
-                apiKey: apiKey,
-                model: model,
-                contextWindowTokens: appleContextWindowTokenLimit,
-                stats: stats
-            )
-            AppLogger.debug(
-                "Densification completed [provider=\(provider.rawValue) runs=\(stats.runCount) chunked=true seconds=\(formattedElapsedSeconds(since: startedAt))]"
-            )
-            return output
-        }
-#endif
-        throw AppError.providerRequestFailed(
-            "Apple Foundation Models are unavailable in this environment."
-        )
-    }
-
-    func requestText(request: ProviderTextRequest, apiKey: String, model: String) async throws -> String {
-        try await withProviderWorkPermit(provider: provider, operationName: "request_text") {
-#if canImport(FoundationModels)
-            if #available(macOS 26.0, *) {
-                guard SystemLanguageModel.default.availability == .available else {
-                    throw AppError.providerRequestFailed(
-                        "Apple Foundation Models are not available on this Mac."
-                    )
-                }
-                let session = makeLanguageModelSession(systemInstruction: request.systemInstruction)
-                do {
-                    let response = try await session.respond(to: request.prompt)
-                    let text = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !text.isEmpty else {
-                        throw AppError.providerRequestFailed("Apple Foundation Models returned an empty response.")
-                    }
-                    return text
-                } catch let appError as AppError {
-                    throw appError
-                } catch {
-                    throw mappedAppleFoundationError(error)
-                }
-            }
-#endif
-            throw AppError.providerRequestFailed(
-                "Apple Foundation Models are unavailable in this environment."
-            )
-        }
-    }
-}
-
-#if canImport(FoundationModels)
-@available(macOS 26.0, *)
-private extension AppleFoundationProviderClient {
-    func makeLanguageModelSession(systemInstruction: String?) -> LanguageModelSession {
-        if
-            let instruction = systemInstruction?.trimmingCharacters(in: .whitespacesAndNewlines),
-            !instruction.isEmpty
-        {
-            return LanguageModelSession(instructions: instruction)
-        }
-        return LanguageModelSession()
-    }
-
-    func mappedAppleFoundationError(_ error: Error) -> AppError {
-        if isRawContextWindowExceededError(error) {
-            return .providerRequestFailed(appleContextWindowExceededMessage)
-        }
-        return .providerRequestFailed("Apple Foundation Models request failed: \(error.localizedDescription)")
-    }
-}
-#endif
 
 private func densificationChunkPrompt(
     inputText: String,

@@ -81,7 +81,7 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.alignment = .centerX
 
-        let title = NSTextField(labelWithString: "Grant permissions and configure model access.")
+        let title = NSTextField(labelWithString: "Grant permissions and configure CLI access.")
         title.font = .systemFont(ofSize: 14, weight: .medium)
         title.alignment = .center
         stack.addArrangedSubview(title)
@@ -126,7 +126,7 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
         fieldColumn.orientation = .vertical
         fieldColumn.spacing = 8
         fieldColumn.translatesAutoresizingMaskIntoConstraints = false
-        fieldColumn.addArrangedSubview(labeledRow(label: "Provider", view: providerPopup))
+        fieldColumn.addArrangedSubview(labeledRow(label: "CLI Tool", view: providerPopup))
         appleProviderWarningLabel.stringValue = appleProviderWarningMessage
         appleProviderWarningLabel.textColor = .systemOrange
         let subheadlineSize = NSFont.preferredFont(forTextStyle: .subheadline).pointSize
@@ -275,7 +275,7 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
             let selectedProviderRawValue = providerPopup.selectedItem?.representedObject as? String,
             let provider = ProviderName(rawValue: selectedProviderRawValue)
         else {
-            infoLabel.stringValue = "Select a provider."
+            infoLabel.stringValue = "Select a CLI tool."
             return
         }
 
@@ -288,7 +288,7 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
 
         let apiKeyForValidation = normalizedAPIKey(keyField.stringValue)
         keyField.stringValue = apiKeyForValidation
-        infoLabel.stringValue = "Validating model access..."
+        infoLabel.stringValue = "Validating CLI access..."
         guard !requiresCredentials || !apiKeyForValidation.isEmpty else {
             infoLabel.stringValue = "API key is required."
             return
@@ -305,7 +305,7 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
                 try await self.validateProvider(provider: provider, model: model, apiKey: apiKeyForValidation)
                 try self.appStateService.configureProvider(
                     provider: provider,
-                    model: requiresCredentials ? model : "",
+                    model: model,
                     apiKey: requiresCredentials ? apiKeyForValidation : nil
                 )
                 try self.appStateService.markOnboardingCompleted()
@@ -439,10 +439,7 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
     }
 
     private func availableProviders() -> [ProviderName] {
-        if developmentConfig.appleFoundationProviderEnabled {
-            return [.apple, .openai, .anthropic, .gemini]
-        }
-        return [.openai, .anthropic, .gemini]
+        [.codex, .claude, .gemini]
     }
 
     private func providerRequiresCredentials(_ provider: ProviderName) -> Bool {
@@ -482,7 +479,7 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
         }
         infoLabel.stringValue = onboardingCompletedAtLoad
             ? ""
-            : "\(provider.displayName) selected. Model and API key are not required."
+            : "\(provider.displayName) selected. Model is optional."
         updateActionAvailability()
     }
 
@@ -505,45 +502,41 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
             return
         }
         let savedModel = (try? appStateService.model(for: provider)) ?? fallbackModelValue ?? defaultModel(for: provider)
+        modelField.stringValue = savedModel
         if providerRequiresCredentials(provider) {
-            modelField.stringValue = savedModel
             let savedKey = (try? appStateService.apiKey(for: provider)) ?? nil
             keyField.stringValue = normalizedAPIKey(savedKey ?? "")
             return
         }
-        modelField.stringValue = ""
         keyField.stringValue = ""
     }
 
     private func updateProviderFieldAvailability() {
         let enabled = !setupValidationInProgress
         let requiresCredentials = currentSelectedProvider().map(providerRequiresCredentials) ?? true
-        appleProviderWarningRow?.isHidden = currentSelectedProvider() != .apple
-        modelRow?.isHidden = !requiresCredentials
+        appleProviderWarningRow?.isHidden = true
+        modelRow?.isHidden = false
         keyRow?.isHidden = !requiresCredentials
-        modelField.isEnabled = enabled && requiresCredentials
-        modelField.isEditable = enabled && requiresCredentials
+        modelField.isEnabled = enabled
+        modelField.isEditable = enabled
         keyField.isEnabled = enabled && requiresCredentials
         keyField.isEditable = enabled && requiresCredentials
+        modelField.placeholderString = currentSelectedProvider().map(defaultModel) ?? defaultModel(for: .codex)
         if requiresCredentials {
-            modelField.placeholderString = currentSelectedProvider().map(defaultModel) ?? defaultModel(for: .openai)
             keyField.placeholderString = ""
             return
         }
-        modelField.placeholderString = nil
         keyField.placeholderString = nil
     }
 
     private func defaultModel(for provider: ProviderName) -> String {
         switch provider {
-        case .openai:
-            return "gpt-5-nano"
-        case .anthropic:
-            return "claude-haiku-4-5"
+        case .codex:
+            return "gpt-5-codex"
+        case .claude:
+            return "claude-sonnet-4-5"
         case .gemini:
-            return "gemini-flash-latest"
-        case .apple:
-            return ""
+            return "gemini-2.5-flash"
         }
     }
 
@@ -613,16 +606,16 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
         }
         guard let selection else {
             guard let selectedProvider = currentSelectedProvider() else {
-                infoLabel.stringValue = onboardingCompletedAtLoad ? "" : "Select provider, model, and API key to complete setup."
+                infoLabel.stringValue = onboardingCompletedAtLoad ? "" : "Select a CLI tool to complete setup."
                 return
             }
             if providerRequiresCredentials(selectedProvider) {
-                infoLabel.stringValue = onboardingCompletedAtLoad ? "" : "Select provider, model, and API key to complete setup."
+                infoLabel.stringValue = onboardingCompletedAtLoad ? "" : "Select tool, model, and API key to complete setup."
                 return
             }
             infoLabel.stringValue = onboardingCompletedAtLoad
                 ? ""
-                : "\(selectedProvider.displayName) selected. Model and API key are not required."
+                : "\(selectedProvider.displayName) selected. Model is optional."
             return
         }
         if providerRequiresCredentials(selection.provider) {
@@ -633,7 +626,7 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
         }
         infoLabel.stringValue = onboardingCompletedAtLoad
             ? ""
-            : "\(selection.provider.displayName) selected. Model and API key are not required."
+            : "\(selection.provider.displayName) selected. Model is optional."
     }
 
     private func refreshPermissionsStatus() {
@@ -737,14 +730,12 @@ extension SetupViewController {
 private extension ProviderName {
     var displayName: String {
         switch self {
-        case .openai:
-            return "OpenAI"
-        case .anthropic:
-            return "Anthropic"
+        case .codex:
+            return "Codex"
+        case .claude:
+            return "Claude Code"
         case .gemini:
             return "Gemini"
-        case .apple:
-            return "Apple"
         }
     }
 }

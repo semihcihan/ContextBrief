@@ -27,64 +27,7 @@ private final class MockSetupKeychain: KeychainServicing {
 
 @MainActor
 final class SetupViewControllerTests: XCTestCase {
-    func testShowsAppleProviderWhenAvailableAndSelectsItByDefault() throws {
-        let (appStateService, _) = try makeAppStateService()
-        let controller = makeController(
-            appStateService: appStateService,
-            developmentConfig: DevelopmentConfig(
-                enableLocalDebugProvider: false,
-                appleFoundationAvailableOverride: true
-            )
-        )
-        controller.loadViewIfNeeded()
-
-        XCTAssertTrue(controller.testingProviderTitles().contains("Apple"))
-        XCTAssertEqual(controller.testingSelectedProvider(), .apple)
-        XCTAssertEqual(controller.testingInfoLabelValue(), "Apple selected. Model and API key are not required.")
-        XCTAssertTrue(controller.testingAppleProviderWarningVisible())
-        XCTAssertEqual(
-            controller.testingAppleProviderWarningValue(),
-            "Apple's on-device LLM may respond more slowly. Snapshot processing can take longer."
-        )
-        XCTAssertFalse(controller.testingModelRowVisible())
-        XCTAssertFalse(controller.testingAPIKeyRowVisible())
-    }
-
-    func testSelectingAppleHidesModelAndAPIKeyFields() throws {
-        let (appStateService, _) = try makeAppStateService()
-        let controller = makeController(
-            appStateService: appStateService,
-            developmentConfig: DevelopmentConfig(
-                enableLocalDebugProvider: false,
-                appleFoundationAvailableOverride: true
-            )
-        )
-        controller.loadViewIfNeeded()
-        controller.testingSelectProvider(.apple)
-
-        XCTAssertTrue(controller.testingAppleProviderWarningVisible())
-        XCTAssertFalse(controller.testingModelRowVisible())
-        XCTAssertFalse(controller.testingAPIKeyRowVisible())
-        XCTAssertFalse(controller.testingModelFieldEnabled())
-        XCTAssertFalse(controller.testingKeyFieldEnabled())
-    }
-
-    func testSelectingCredentialProviderHidesAppleWarning() throws {
-        let (appStateService, _) = try makeAppStateService()
-        let controller = makeController(
-            appStateService: appStateService,
-            developmentConfig: DevelopmentConfig(
-                enableLocalDebugProvider: false,
-                appleFoundationAvailableOverride: true
-            )
-        )
-        controller.loadViewIfNeeded()
-        controller.testingSelectProvider(.openai)
-
-        XCTAssertFalse(controller.testingAppleProviderWarningVisible())
-    }
-
-    func testDefaultModelValueIsGpt5Nano() throws {
+    func testShowsCLIToolsAndSelectsCodexByDefault() throws {
         let (appStateService, _) = try makeAppStateService()
         let controller = makeController(
             appStateService: appStateService,
@@ -92,73 +35,31 @@ final class SetupViewControllerTests: XCTestCase {
         )
         controller.loadViewIfNeeded()
 
-        XCTAssertEqual(controller.testingModelValue(), "gpt-5-nano")
-    }
-
-    func testSelectingOlderProviderRestoresSavedModelAndKey() throws {
-        let (appStateService, _) = try makeAppStateService()
-        try appStateService.configureProvider(provider: .openai, model: "gpt-4.1-mini", apiKey: "sk-openai")
-        try appStateService.configureProvider(provider: .apple, model: "", apiKey: nil)
-
-        let controller = makeController(
-            appStateService: appStateService,
-            developmentConfig: DevelopmentConfig(
-                enableLocalDebugProvider: false,
-                appleFoundationAvailableOverride: true
-            )
-        )
-        controller.loadViewIfNeeded()
-        controller.testingSelectProvider(.openai)
-
-        XCTAssertEqual(controller.testingSelectedProvider(), .openai)
+        XCTAssertEqual(controller.testingProviderTitles(), ["Codex", "Claude Code", "Gemini"])
+        XCTAssertEqual(controller.testingSelectedProvider(), .codex)
+        XCTAssertEqual(controller.testingInfoLabelValue(), "Codex selected. Model is optional.")
+        XCTAssertFalse(controller.testingAPIKeyRowVisible())
         XCTAssertTrue(controller.testingModelRowVisible())
-        XCTAssertTrue(controller.testingAPIKeyRowVisible())
-        XCTAssertEqual(controller.testingModelValue(), "gpt-4.1-mini")
-        XCTAssertEqual(controller.testingAPIKeyValue(), "sk-openai")
-        XCTAssertEqual(controller.testingInfoLabelValue(), "Ready to finish setup.")
-        XCTAssertTrue(controller.testingModelFieldEnabled())
-        XCTAssertTrue(controller.testingKeyFieldEnabled())
     }
 
-    func testSelectingProviderWithoutSavedValuesUsesProviderDefaultModelAndClearsKey() throws {
-        let (appStateService, _) = try makeAppStateService()
-        try appStateService.configureProvider(provider: .openai, model: "gpt-4.1-mini", apiKey: "sk-openai")
-
-        let controller = makeController(
-            appStateService: appStateService,
-            developmentConfig: defaultDevelopmentConfig()
-        )
-        controller.loadViewIfNeeded()
-        controller.testingSelectProvider(.gemini)
-
-        XCTAssertEqual(controller.testingSelectedProvider(), .gemini)
-        XCTAssertEqual(controller.testingModelValue(), "gemini-flash-latest")
-        XCTAssertEqual(controller.testingAPIKeyValue(), "")
-        XCTAssertEqual(controller.testingInfoLabelValue(), "Enter model and API key to complete setup.")
-        XCTAssertTrue(controller.testingModelFieldEnabled())
-        XCTAssertTrue(controller.testingKeyFieldEnabled())
-    }
-
-    func testSelectingAnthropicWithoutSavedValuesUsesAnthropicDefaultModel() throws {
+    func testSelectingClaudeUpdatesInfoAndDefaultModel() throws {
         let (appStateService, _) = try makeAppStateService()
         let controller = makeController(
             appStateService: appStateService,
             developmentConfig: defaultDevelopmentConfig()
         )
         controller.loadViewIfNeeded()
-        controller.testingSelectProvider(.anthropic)
+        controller.testingSelectProvider(.claude)
 
-        XCTAssertEqual(controller.testingSelectedProvider(), .anthropic)
-        XCTAssertEqual(controller.testingModelValue(), "claude-haiku-4-5")
-        XCTAssertEqual(controller.testingAPIKeyValue(), "")
-        XCTAssertEqual(controller.testingInfoLabelValue(), "Enter model and API key to complete setup.")
-        XCTAssertTrue(controller.testingModelFieldEnabled())
-        XCTAssertTrue(controller.testingKeyFieldEnabled())
+        XCTAssertEqual(controller.testingSelectedProvider(), .claude)
+        XCTAssertEqual(controller.testingModelValue(), "claude-sonnet-4-5")
+        XCTAssertEqual(controller.testingInfoLabelValue(), "Claude Code selected. Model is optional.")
+        XCTAssertFalse(controller.testingAPIKeyRowVisible())
     }
 
     func testCompletedSetupLoadsWithNeutralInfoAndDisabledSaveChanges() throws {
         let (appStateService, _) = try makeAppStateService()
-        try appStateService.configureProvider(provider: .openai, model: "gpt-4.1-mini", apiKey: "sk-openai")
+        try appStateService.configureProvider(provider: .codex, model: "gpt-5-codex", apiKey: nil)
         try appStateService.markOnboardingCompleted()
 
         let controller = makeController(
@@ -173,9 +74,9 @@ final class SetupViewControllerTests: XCTestCase {
         XCTAssertTrue(controller.testingSetupCompleteBadgeVisible())
     }
 
-    func testCompletedSetupEnablesSaveChangesWhenConfigurationBecomesDirty() throws {
+    func testCompletedSetupEnablesSaveChangesWhenModelChanges() throws {
         let (appStateService, _) = try makeAppStateService()
-        try appStateService.configureProvider(provider: .openai, model: "gpt-4.1-mini", apiKey: "sk-openai")
+        try appStateService.configureProvider(provider: .codex, model: "gpt-5-codex", apiKey: nil)
         try appStateService.markOnboardingCompleted()
 
         let controller = makeController(
@@ -183,16 +84,16 @@ final class SetupViewControllerTests: XCTestCase {
             developmentConfig: defaultDevelopmentConfig()
         )
         controller.loadViewIfNeeded()
-        controller.testingSetModelValue("gpt-4.1")
+        controller.testingSetModelValue("gpt-5")
 
         XCTAssertEqual(controller.testingFinishSetupButtonTitle(), "Save Changes")
         XCTAssertTrue(controller.testingFinishSetupButtonEnabled())
         XCTAssertFalse(controller.testingSetupCompleteBadgeVisible())
     }
 
-    func testIncompleteOnboardingUsesFinishSetupAndActionableInfo() throws {
+    func testIncompleteOnboardingUsesFinishSetupWithActionableInfo() throws {
         let (appStateService, _) = try makeAppStateService()
-        try appStateService.configureProvider(provider: .openai, model: "gpt-4.1-mini", apiKey: "sk-openai")
+        try appStateService.configureProvider(provider: .codex, model: "gpt-5-codex", apiKey: nil)
 
         let controller = makeController(
             appStateService: appStateService,
@@ -200,7 +101,7 @@ final class SetupViewControllerTests: XCTestCase {
         )
         controller.loadViewIfNeeded()
 
-        XCTAssertEqual(controller.testingInfoLabelValue(), "Ready to finish setup.")
+        XCTAssertEqual(controller.testingInfoLabelValue(), "Codex selected. Model is optional.")
         XCTAssertEqual(controller.testingFinishSetupButtonTitle(), "Finish Setup")
         XCTAssertTrue(controller.testingFinishSetupButtonEnabled())
         XCTAssertFalse(controller.testingSetupCompleteBadgeVisible())

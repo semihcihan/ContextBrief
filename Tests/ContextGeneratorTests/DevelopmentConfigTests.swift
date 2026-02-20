@@ -14,8 +14,9 @@ final class DevelopmentConfigTests: XCTestCase {
         XCTAssertEqual(config.appleContextTitleRefreshEvery, 6)
         XCTAssertEqual(config.forcedProviderFailureChance, 0)
         XCTAssertEqual(config.providerParallelWorkLimitDefault, 10)
-        XCTAssertEqual(config.providerParallelWorkLimit(for: .apple), 10)
-        XCTAssertEqual(config.providerParallelWorkLimit(for: .openai), 10)
+        XCTAssertEqual(config.providerParallelWorkLimit(for: .codex), 10)
+        XCTAssertEqual(config.providerParallelWorkLimit(for: .claude), 10)
+        XCTAssertEqual(config.providerParallelWorkLimit(for: .gemini), 10)
         XCTAssertNil(config.snapshotInactivityPromptMinutes)
         XCTAssertFalse(config.appleFoundationProviderEnabled)
     }
@@ -27,8 +28,7 @@ final class DevelopmentConfigTests: XCTestCase {
             "appleContextTitleRefreshEvery": 2,
             "forcedProviderFailureChance": 0.4,
             "providerParallelWorkLimitDefault": 8,
-            "providerParallelWorkLimitApple": 3,
-            "providerParallelWorkLimitOpenAI": 12,
+            "providerParallelWorkLimitGemini": 12,
             "snapshotInactivityPromptMinutes": 30
         ])
         let config = DevelopmentConfig(plistURL: plistURL, appleFoundationAvailableOverride: true)
@@ -42,17 +42,17 @@ final class DevelopmentConfigTests: XCTestCase {
         XCTAssertEqual(config.forcedProviderFailureChance, 0)
 #endif
         XCTAssertEqual(config.providerParallelWorkLimitDefault, 8)
-        XCTAssertEqual(config.providerParallelWorkLimit(for: .apple), 3)
-        XCTAssertEqual(config.providerParallelWorkLimit(for: .openai), 12)
-        XCTAssertEqual(config.providerParallelWorkLimit(for: .anthropic), 8)
+        XCTAssertEqual(config.providerParallelWorkLimit(for: .codex), 8)
+        XCTAssertEqual(config.providerParallelWorkLimit(for: .claude), 8)
+        XCTAssertEqual(config.providerParallelWorkLimit(for: .gemini), 12)
         XCTAssertEqual(config.snapshotInactivityPromptMinutes, 30)
     }
 
-    func testRoutingUsesSelectedProviderWithoutImplicitAppleOverrides() {
+    func testRoutingUsesSelectedProvider() {
         let configUnavailable = DevelopmentConfig(
             appleFoundationAvailableOverride: false
         )
-        XCTAssertEqual(configUnavailable.providerForTitleGeneration(selectedProvider: .apple), .apple)
+        XCTAssertEqual(configUnavailable.providerForTitleGeneration(selectedProvider: .codex), .codex)
         XCTAssertEqual(configUnavailable.providerForDensification(selectedProvider: .gemini), .gemini)
         XCTAssertFalse(configUnavailable.appleFoundationProviderEnabled)
 
@@ -61,11 +61,11 @@ final class DevelopmentConfigTests: XCTestCase {
             appleContextTitleRefreshEvery: 2,
             appleFoundationAvailableOverride: true
         )
-        XCTAssertEqual(configAvailable.providerForTitleGeneration(selectedProvider: .openai), .openai)
-        XCTAssertEqual(configAvailable.providerForDensification(selectedProvider: .apple), .apple)
+        XCTAssertEqual(configAvailable.providerForTitleGeneration(selectedProvider: .claude), .claude)
+        XCTAssertEqual(configAvailable.providerForDensification(selectedProvider: .gemini), .gemini)
         XCTAssertTrue(configAvailable.appleFoundationProviderEnabled)
-        XCTAssertEqual(configAvailable.contextTitleRefreshEvery(for: .openai), 4)
-        XCTAssertEqual(configAvailable.contextTitleRefreshEvery(for: .apple), 2)
+        XCTAssertEqual(configAvailable.contextTitleRefreshEvery(for: .codex), 4)
+        XCTAssertEqual(configAvailable.contextTitleRefreshEvery(for: .gemini), 4)
     }
 
     func testRefreshIntervalsAreClampedToMinimumOne() {
@@ -93,15 +93,12 @@ final class DevelopmentConfigTests: XCTestCase {
     func testProviderParallelLimitFallbackAndClamping() {
         let config = DevelopmentConfig(
             providerParallelWorkLimitDefault: 0,
-            providerParallelWorkLimitApple: -4,
-            providerParallelWorkLimitOpenAI: 0,
-            providerParallelWorkLimitAnthropic: 6
+            providerParallelWorkLimitGemini: 6
         )
         XCTAssertEqual(config.providerParallelWorkLimitDefault, 1)
-        XCTAssertEqual(config.providerParallelWorkLimit(for: .apple), 1)
-        XCTAssertEqual(config.providerParallelWorkLimit(for: .openai), 1)
-        XCTAssertEqual(config.providerParallelWorkLimit(for: .anthropic), 6)
-        XCTAssertEqual(config.providerParallelWorkLimit(for: .gemini), 1)
+        XCTAssertEqual(config.providerParallelWorkLimit(for: .codex), 1)
+        XCTAssertEqual(config.providerParallelWorkLimit(for: .claude), 1)
+        XCTAssertEqual(config.providerParallelWorkLimit(for: .gemini), 6)
     }
 
     func testSnapshotInactivityPromptMinutesIsOptionalAndClamped() {
@@ -119,18 +116,15 @@ final class DevelopmentConfigTests: XCTestCase {
     }
 
     func testLocalDebugFlagCanDisableCredentialRequirements() {
-        let config = DevelopmentConfig(
-            enableLocalDebugProvider: true
-        )
+        let debugConfig = DevelopmentConfig(enableLocalDebugProvider: true)
+        let normalConfig = DevelopmentConfig(enableLocalDebugProvider: false)
 
-#if DEBUG
-        XCTAssertFalse(config.requiresCredentials(for: .openai))
-        XCTAssertFalse(config.requiresCredentials(for: .gemini))
-#else
-        XCTAssertTrue(config.requiresCredentials(for: .openai))
-        XCTAssertTrue(config.requiresCredentials(for: .gemini))
-#endif
-        XCTAssertFalse(config.requiresCredentials(for: .apple))
+        XCTAssertFalse(debugConfig.requiresCredentials(for: .codex))
+        XCTAssertFalse(debugConfig.requiresCredentials(for: .claude))
+        XCTAssertFalse(debugConfig.requiresCredentials(for: .gemini))
+        XCTAssertFalse(normalConfig.requiresCredentials(for: .codex))
+        XCTAssertFalse(normalConfig.requiresCredentials(for: .claude))
+        XCTAssertFalse(normalConfig.requiresCredentials(for: .gemini))
     }
 
     private func writePlist(_ dictionary: [String: Any]) throws -> URL {

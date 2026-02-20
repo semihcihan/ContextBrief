@@ -3,12 +3,14 @@ import XCTest
 
 private final class RetrySuccessDensifier: Densifying {
     func densify(snapshot: CapturedSnapshot, provider: ProviderName, model: String, apiKey: String) async throws -> String {
-        "dense-after-manual-retry"
+        XCTAssertEqual(provider, .codex)
+        return "dense-after-manual-retry"
     }
 }
 
 private final class RetryFailureDensifier: Densifying {
     func densify(snapshot: CapturedSnapshot, provider: ProviderName, model: String, apiKey: String) async throws -> String {
+        XCTAssertEqual(provider, .codex)
         throw AppError.providerRequestFailed("manual retry failed")
     }
 }
@@ -35,7 +37,6 @@ final class SnapshotRetryWorkflowTests: XCTestCase {
         let repo = ContextRepository(rootURL: tempRoot)
         let manager = ContextSessionManager(repository: repo)
         let keychain = RetryMockKeychain()
-        try keychain.set("secret", for: "api.openai")
 
         _ = try manager.createNewContext(title: "Current")
         let failed = try manager.appendSnapshot(
@@ -56,7 +57,7 @@ final class SnapshotRetryWorkflowTests: XCTestCase {
                 )
             ),
             denseContent: "",
-            provider: .openai,
+            provider: .codex,
             model: "gpt-5-nano",
             status: .failed,
             failureMessage: "initial failure",
@@ -84,7 +85,6 @@ final class SnapshotRetryWorkflowTests: XCTestCase {
         let repo = ContextRepository(rootURL: tempRoot)
         let manager = ContextSessionManager(repository: repo)
         let keychain = RetryMockKeychain()
-        try keychain.set("secret", for: "api.openai")
 
         _ = try manager.createNewContext(title: "Current")
         let failed = try manager.appendSnapshot(
@@ -105,7 +105,7 @@ final class SnapshotRetryWorkflowTests: XCTestCase {
                 )
             ),
             denseContent: "",
-            provider: .openai,
+            provider: .codex,
             model: "gpt-5-nano",
             status: .failed,
             failureMessage: "initial failure",

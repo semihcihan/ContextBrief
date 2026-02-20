@@ -1,19 +1,17 @@
 import Foundation
 
 public enum ProviderName: String, Codable, CaseIterable {
-    case openai
-    case anthropic
+    case codex
+    case claude
     case gemini
-    case apple
 }
 
 public extension ProviderName {
+    var isCLIProvider: Bool {
+        true
+    }
+
     var requiresCredentials: Bool {
-        switch self {
-        case .apple:
-            return false
-        case .openai, .anthropic, .gemini:
-            return true
-        }
+        false
     }
 }

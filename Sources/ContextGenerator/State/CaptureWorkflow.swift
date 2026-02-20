@@ -36,20 +36,15 @@ public final class CaptureWorkflow {
         screenshotData: Data?
     ) async throws -> CaptureWorkflowResult {
         let state = try repository.appState()
-        guard let selectedProvider = state.selectedProvider else {
+        guard
+            let selectedProvider = state.selectedProvider,
+            selectedProvider.isCLIProvider
+        else {
             throw AppError.providerNotConfigured
         }
         let provider = DevelopmentConfig.shared.providerForDensification(selectedProvider: selectedProvider)
         let model = state.selectedModel ?? ""
-        let requiresCredentials = DevelopmentConfig.shared.requiresCredentials(for: provider)
-        guard !requiresCredentials || !model.isEmpty else {
-            throw AppError.providerNotConfigured
-        }
-
         let key = try keychain.get("api.\(provider.rawValue)") ?? ""
-        guard !requiresCredentials || !key.isEmpty else {
-            throw AppError.keyNotConfigured
-        }
 
         let snapshot: Snapshot
         switch await densifyWithRetry(

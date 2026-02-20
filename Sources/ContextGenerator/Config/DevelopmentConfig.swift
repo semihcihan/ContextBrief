@@ -128,20 +128,15 @@ public struct DevelopmentConfig {
     }
 
     public func contextTitleRefreshEvery(for provider: ProviderName) -> Int {
-        provider == .apple
-            ? appleContextTitleRefreshEvery
-            : thirdPartyContextTitleRefreshEvery
+        _ = provider
+        return thirdPartyContextTitleRefreshEvery
     }
 
     public func providerParallelWorkLimit(for provider: ProviderName) -> Int {
         let providerOverride: Int?
         switch provider {
-        case .apple:
-            providerOverride = providerParallelWorkLimitApple
-        case .openai:
-            providerOverride = providerParallelWorkLimitOpenAI
-        case .anthropic:
-            providerOverride = providerParallelWorkLimitAnthropic
+        case .codex, .claude:
+            providerOverride = nil
         case .gemini:
             providerOverride = providerParallelWorkLimitGemini
         }

@@ -38,7 +38,9 @@ public struct AppState: Codable, Equatable {
         currentContextId = try container.decodeIfPresent(UUID.self, forKey: .currentContextId)
         onboardingCompleted = try container.decodeIfPresent(Bool.self, forKey: .onboardingCompleted) ?? false
         launchAtLoginConfigured = try container.decodeIfPresent(Bool.self, forKey: .launchAtLoginConfigured) ?? false
-        selectedProvider = try container.decodeIfPresent(ProviderName.self, forKey: .selectedProvider)
+        selectedProvider = try container
+            .decodeIfPresent(String.self, forKey: .selectedProvider)
+            .flatMap(ProviderName.init(rawValue:))
         selectedModel = try container.decodeIfPresent(String.self, forKey: .selectedModel)
         shortcuts = try container.decodeIfPresent(ShortcutPreferences.self, forKey: .shortcuts) ?? .defaultValue
     }

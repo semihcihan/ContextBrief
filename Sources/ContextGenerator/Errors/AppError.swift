@@ -30,9 +30,9 @@ public enum AppError: LocalizedError {
         case .snapshotNotFound:
             return "Selected snapshot was not found."
         case .keyNotConfigured:
-            return "API key is missing. Configure it in Settings."
+            return "Required credentials are missing. Configure setup settings."
         case .providerNotConfigured:
-            return "Provider is not configured. Complete onboarding."
+            return "LLM CLI tool is not configured. Complete setup."
         case .providerRequestFailed(let details):
             return details
         case .densificationInputTooLong(let estimated, let limit):

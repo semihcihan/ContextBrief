@@ -243,8 +243,8 @@ final class ContextSessionManagerTests: XCTestCase {
         _ = try manager.appendSnapshot(
             rawCapture: capture,
             denseContent: "dense",
-            provider: .openai,
-            model: "gpt-5-nano",
+            provider: .codex,
+            model: "gpt-5-codex",
             status: .ready
         )
         XCTAssertFalse(try manager.hasFailedSnapshotsInCurrentContext())
@@ -252,8 +252,8 @@ final class ContextSessionManagerTests: XCTestCase {
         _ = try manager.appendSnapshot(
             rawCapture: capture,
             denseContent: "",
-            provider: .openai,
-            model: "gpt-5-nano",
+            provider: .codex,
+            model: "gpt-5-codex",
             status: .failed,
             failureMessage: "provider failed",
             retryCount: 1,
@@ -282,7 +282,7 @@ final class ContextSessionManagerTests: XCTestCase {
                     _ = try manager.appendSnapshot(
                         rawCapture: capture,
                         denseContent: "dense",
-                        provider: .openai,
+                        provider: .codex,
                         model: "gpt-5-mini"
                     )
                 } catch {
@@ -309,7 +309,7 @@ final class ContextSessionManagerTests: XCTestCase {
         let saved = try manager.appendSnapshot(
             rawCapture: sampleCapture(),
             denseContent: "dense",
-            provider: .openai,
+            provider: .codex,
             model: "gpt-5-mini"
         )
         XCTAssertEqual(saved.contextId, newContext.id)
@@ -325,7 +325,7 @@ final class ContextSessionManagerTests: XCTestCase {
         let saved = try manager.appendSnapshot(
             rawCapture: sampleCapture(),
             denseContent: "dense",
-            provider: .openai,
+            provider: .codex,
             model: "gpt-5-mini"
         )
         XCTAssertNotEqual(saved.contextId, deletedContext.id)

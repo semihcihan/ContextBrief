@@ -27,12 +27,12 @@ public final class AppStateService {
         }
         if !model.isEmpty {
             try keychain.set(model, for: modelStorageKey(for: provider))
+        } else {
+            try? keychain.delete(modelStorageKey(for: provider))
         }
         var state = try repository.appState()
         state.selectedProvider = provider
-        if !model.isEmpty {
-            state.selectedModel = model
-        }
+        state.selectedModel = model.isEmpty ? nil : model
         try repository.saveAppState(state)
     }
 
