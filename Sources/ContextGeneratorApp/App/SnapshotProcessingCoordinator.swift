@@ -15,6 +15,11 @@ protocol SnapshotProcessingCoordinatorDelegate: AnyObject {
     )
     func snapshotProcessingCoordinator(
         _ coordinator: SnapshotProcessingCoordinator,
+        didCaptureRawFrom source: String,
+        capturedSnapshot: CapturedSnapshot
+    )
+    func snapshotProcessingCoordinator(
+        _ coordinator: SnapshotProcessingCoordinator,
         didFinishCaptureFrom source: String,
         result: CaptureWorkflowResult
     )
@@ -191,6 +196,13 @@ final class SnapshotProcessingCoordinator {
         Task {
             do {
                 let (capturedSnapshot, screenshotData) = try await captureSnapshot()
+                notifyDelegate { delegate in
+                    delegate.snapshotProcessingCoordinator(
+                        self,
+                        didCaptureRawFrom: request.source,
+                        capturedSnapshot: capturedSnapshot
+                    )
+                }
                 let result: CaptureWorkflowResult
                 do {
                     result = try await captureWorkflow.runCapture(
