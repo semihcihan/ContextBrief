@@ -343,34 +343,6 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
             refreshMenuState()
             return
         }
-        do {
-            if
-                !isAnyProcessing,
-                let inactivityPromptMinutes = DevelopmentConfig.shared.snapshotInactivityPromptMinutes,
-                try sessionManager.shouldPromptForNewContext(afterInactivityMinutes: inactivityPromptMinutes)
-            {
-                let alert = NSAlert()
-                alert.messageText = "Start a new context?"
-                alert.informativeText = "Save this snapshot to a new context or keep it in the current context."
-                alert.alertStyle = .informational
-                alert.addButton(withTitle: "Save to New Context")
-                alert.addButton(withTitle: "Keep in Current Context")
-                if alert.runModal() == .alertFirstButtonReturn {
-                    let context = try sessionManager.createNewContext(title: "New Context")
-                    AppLogger.debug(
-                        "captureContext inactivity prompt created new context contextId=\(context.id.uuidString) source=\(source)"
-                    )
-                }
-            }
-        } catch {
-            reportUnexpectedNonFatal(error, context: "capture_context_inactivity_prompt")
-            AppLogger.error(
-                "captureContext inactivity prompt handling failed source=\(source) error=\(error.localizedDescription)"
-            )
-            updateFeedback("Could not create a new context")
-            refreshMenuState()
-            return
-        }
         snapshotProcessingCoordinator.requestCapture(source: source)
     }
 
@@ -1140,6 +1112,51 @@ extension MenuBarAppController: SnapshotProcessingCoordinatorDelegate {
             "Capture processing started source=\(source)"
         )
         eventTracker.track(.captureStarted, parameters: ["source": source])
+    }
+
+    @MainActor
+    func snapshotProcessingCoordinator(
+        _ coordinator: SnapshotProcessingCoordinator,
+        didCaptureRawFrom source: String,
+        capturedSnapshot: CapturedSnapshot
+    ) {
+        maybeShowInactivityPromptAfterCapture()
+    }
+
+    @MainActor
+    private func maybeShowInactivityPromptAfterCapture() {
+        guard
+            let inactivityMinutes = DevelopmentConfig.shared.snapshotInactivityPromptMinutes,
+            inactivityMinutes > 0,
+            (try? sessionManager.shouldPromptForNewContext(afterInactivityMinutes: inactivityMinutes)) == true
+        else {
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = "Start a new context?"
+        alert.informativeText = "It had been more than \(inactivityMinutes) minutes since your last snapshot. Save this one to a new context or keep it here?"
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Move to New Context")
+        alert.addButton(withTitle: "Keep in Current Context")
+        if alert.runModal() == .alertFirstButtonReturn {
+            do {
+                let newContext = try sessionManager.createNewContext(title: "New Context")
+                eventTracker.track(.newContextSucceeded, parameters: ["context_id": newContext.id.uuidString])
+                AppLogger.debug(
+                    "Inactivity prompt created new context for upcoming snapshot contextId=\(newContext.id.uuidString)"
+                )
+                updateFeedback("New context created; snapshot will be added there")
+                enqueueContextTitleRefreshIfNeeded(contextId: newContext.id)
+                Task { @MainActor [weak self] in
+                    await self?.flushPendingContextTitleRefreshesIfNeeded()
+                    self?.refreshMenuState()
+                }
+            } catch {
+                reportUnexpectedNonFatal(error, context: "inactivity_prompt_new_context")
+                AppLogger.error("Inactivity prompt create new context failed: \(error.localizedDescription)")
+                updateFeedback("New context failed")
+            }
+        }
     }
 
     @MainActor
