@@ -367,10 +367,14 @@ final class ContextLibraryController: NSViewController, NSOutlineViewDataSource,
             )
         }
         #if DEBUG
-        if !snapshot.rawContent.isEmpty {
+        let filteredDebugContent = snapshot.filteredCombinedText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let debugContent = filteredDebugContent.isEmpty
+            ? snapshot.rawContent
+            : filteredDebugContent
+        if !debugContent.isEmpty {
             details.append(
                 NSAttributedString(
-                    string: "\n\n——— Raw ———\n\n\(snapshot.rawContent)",
+                    string: "\n\n——— Filtered ———\n\n\(debugContent)",
                     attributes: [
                         .font: bodyFont,
                         .foregroundColor: NSColor.secondaryLabelColor

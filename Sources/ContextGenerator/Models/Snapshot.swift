@@ -29,6 +29,7 @@ public struct Snapshot: Codable, Identifiable, Hashable {
     public let windowTitle: String
     public let captureMethod: CaptureMethod
     public let rawContent: String
+    public let filteredCombinedText: String?
     public let ocrContent: String
     public let denseContent: String
     public let provider: String?
@@ -53,6 +54,7 @@ public struct Snapshot: Codable, Identifiable, Hashable {
         windowTitle: String,
         captureMethod: CaptureMethod,
         rawContent: String,
+        filteredCombinedText: String? = nil,
         ocrContent: String,
         denseContent: String,
         provider: String? = nil,
@@ -77,6 +79,7 @@ public struct Snapshot: Codable, Identifiable, Hashable {
         self.windowTitle = windowTitle
         self.captureMethod = captureMethod
         self.rawContent = rawContent
+        self.filteredCombinedText = filteredCombinedText
         self.ocrContent = ocrContent
         self.denseContent = denseContent
         self.provider = provider
@@ -102,6 +105,7 @@ public struct Snapshot: Codable, Identifiable, Hashable {
         case windowTitle
         case captureMethod
         case rawContent
+        case filteredCombinedText
         case ocrContent
         case denseContent
         case provider
@@ -128,6 +132,7 @@ public struct Snapshot: Codable, Identifiable, Hashable {
         windowTitle = try container.decode(String.self, forKey: .windowTitle)
         captureMethod = try container.decode(CaptureMethod.self, forKey: .captureMethod)
         rawContent = try container.decode(String.self, forKey: .rawContent)
+        filteredCombinedText = try container.decodeIfPresent(String.self, forKey: .filteredCombinedText)
         ocrContent = try container.decode(String.self, forKey: .ocrContent)
         denseContent = try container.decode(String.self, forKey: .denseContent)
         provider = try container.decodeIfPresent(String.self, forKey: .provider)
