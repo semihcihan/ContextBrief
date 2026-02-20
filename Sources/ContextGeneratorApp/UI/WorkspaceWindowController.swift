@@ -44,6 +44,7 @@ final class WorkspaceWindowController: NSWindowController {
     private let contextLibraryController: ContextLibraryController
     private let trashLibraryController: TrashLibraryController
     private let notificationCenter: NotificationCenter
+    private let onWindowClose: () -> Void
     private var selectedSection: Section = .setup
 
     init(
@@ -57,8 +58,10 @@ final class WorkspaceWindowController: NSWindowController {
         onShortcutsUpdated: @escaping () -> [String],
         onShortcutRecordingStateChanged: @escaping (Bool) -> Void,
         onSelectionChange: @escaping (String) -> Void,
+        onWindowClose: @escaping () -> Void,
         notificationCenter: NotificationCenter = .default
     ) {
+        self.onWindowClose = onWindowClose
         self.notificationCenter = notificationCenter
         setupController = SetupViewController(
             permissionService: permissionService,
@@ -107,6 +110,12 @@ final class WorkspaceWindowController: NSWindowController {
             selector: #selector(handleContextDataDidChange),
             name: .contextDataDidChange,
             object: nil
+        )
+        notificationCenter.addObserver(
+            self,
+            selector: #selector(handleWindowWillClose),
+            name: NSWindow.willCloseNotification,
+            object: window
         )
 
         sidebarController.configure(
@@ -166,6 +175,13 @@ final class WorkspaceWindowController: NSWindowController {
         refreshVisibleSection()
     }
 
+    @objc private func handleWindowWillClose(_ note: Notification) {
+        guard note.object as? NSWindow == window else {
+            return
+        }
+        onWindowClose()
+    }
+
     private func select(_ section: Section) {
         selectedSection = section
         sidebarController.select(index: section.rawValue)
@@ -175,11 +191,19 @@ final class WorkspaceWindowController: NSWindowController {
         case .shortcuts:
             contentHostController.show(shortcutSettingsController)
         case .contextLibrary:
-            contextLibraryController.refreshData()
             contentHostController.show(contextLibraryController)
+            if contextLibraryController.isViewLoaded {
+                DispatchQueue.main.async { [weak self] in
+                    self?.contextLibraryController.refreshData()
+                }
+            }
         case .trash:
-            trashLibraryController.refreshData()
             contentHostController.show(trashLibraryController)
+            if trashLibraryController.isViewLoaded {
+                DispatchQueue.main.async { [weak self] in
+                    self?.trashLibraryController.refreshData()
+                }
+            }
         }
     }
 

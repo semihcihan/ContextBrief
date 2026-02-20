@@ -670,6 +670,9 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
             onSelectionChange: { [weak self] text in
                 self?.updateFeedback(text)
                 self?.refreshMenuState()
+            },
+            onWindowClose: { [weak self] in
+                self?.workspaceController = nil
             }
         )
         workspaceController = created
