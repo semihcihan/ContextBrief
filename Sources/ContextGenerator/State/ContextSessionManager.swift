@@ -1,6 +1,6 @@
 import Foundation
 
-public final class ContextSessionManager {
+public final class ContextSessionManager: @unchecked Sendable {
     private let repository: ContextRepositorying
     private let snapshotMutationLock = NSLock()
 

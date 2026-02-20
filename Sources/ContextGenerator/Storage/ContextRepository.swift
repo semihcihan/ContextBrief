@@ -1,6 +1,6 @@
 import Foundation
 
-public protocol ContextRepositorying {
+public protocol ContextRepositorying: Sendable {
     func appState() throws -> AppState
     func saveAppState(_ state: AppState) throws
 
@@ -68,7 +68,7 @@ private struct PersistedStore: Codable {
     }
 }
 
-public final class ContextRepository: ContextRepositorying {
+public final class ContextRepository: ContextRepositorying, @unchecked Sendable {
     private let rootURL: URL
     private let storeURL: URL
     private let artifactsURL: URL
