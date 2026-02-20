@@ -603,6 +603,38 @@ private struct CLICommandResult {
     let stderr: String
 }
 
+private final class CLICommandExecutionState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var timeoutTriggered = false
+    private var continuationResumed = false
+
+    func markTimeoutTriggered() {
+        lock.lock()
+        timeoutTriggered = true
+        lock.unlock()
+    }
+
+    func didTimeout() -> Bool {
+        lock.lock()
+        defer {
+            lock.unlock()
+        }
+        return timeoutTriggered
+    }
+
+    func markContinuationResumed() -> Bool {
+        lock.lock()
+        defer {
+            lock.unlock()
+        }
+        guard !continuationResumed else {
+            return false
+        }
+        continuationResumed = true
+        return true
+    }
+}
+
 private extension String {
     var nonEmpty: String? {
         let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
@@ -643,19 +675,12 @@ private func runCLICommand(
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
         let stdinPipe = Pipe()
-        let stateLock = NSLock()
-        var timeoutTriggered = false
-        var continuationResumed = false
+        let executionState = CLICommandExecutionState()
 
-        func resumeOnce(result: Result<CLICommandResult, Error>) {
-            stateLock.lock()
-            defer {
-                stateLock.unlock()
-            }
-            guard !continuationResumed else {
+        let resumeOnce: @Sendable (Result<CLICommandResult, Error>) -> Void = { result in
+            guard executionState.markContinuationResumed() else {
                 return
             }
-            continuationResumed = true
             continuation.resume(with: result)
         }
 
@@ -673,9 +698,7 @@ private func runCLICommand(
         process.arguments = processArguments
 
         let timeoutWorkItem = DispatchWorkItem {
-            stateLock.lock()
-            timeoutTriggered = true
-            stateLock.unlock()
+            executionState.markTimeoutTriggered()
             if process.isRunning {
                 process.terminate()
             }
@@ -690,13 +713,9 @@ private func runCLICommand(
             let stderrTrimmed = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
             let stdoutTrimmed = stdout.trimmingCharacters(in: .whitespacesAndNewlines)
 
-            stateLock.lock()
-            let didTimeout = timeoutTriggered
-            stateLock.unlock()
-
-            if didTimeout {
+            if executionState.didTimeout() {
                 resumeOnce(
-                    result: .failure(
+                    .failure(
                         AppError.providerRequestFailed(
                             "CLI command timed out after \(Int(timeoutSeconds)) seconds."
                         )
@@ -706,19 +725,19 @@ private func runCLICommand(
             }
 
             guard terminatedProcess.terminationStatus == 0 else {
-                let details = stderrTrimmed.nonEmpty ?? stdoutTrimmed.nonEmpty ?? "CLI command failed."
-                resumeOnce(result: .failure(AppError.providerRequestFailed(details)))
+                let details = conciseCLIErrorMessage(stderr: stderrTrimmed, stdout: stdoutTrimmed)
+                resumeOnce(.failure(AppError.providerRequestFailed(details)))
                 return
             }
 
-            resumeOnce(result: .success(CLICommandResult(stdout: stdout, stderr: stderr)))
+            resumeOnce(.success(CLICommandResult(stdout: stdout, stderr: stderr)))
         }
 
         do {
             try process.run()
         } catch {
             resumeOnce(
-                result: .failure(
+                .failure(
                     AppError.providerRequestFailed(
                         "Unable to start CLI command \(binary): \(error.localizedDescription)"
                     )
@@ -783,6 +802,112 @@ private func extractCLIText(from payload: [String: Any]) -> String? {
         }
     }
     return nil
+}
+
+private func conciseCLIErrorMessage(stderr: String, stdout: String) -> String {
+    if let message = conciseCLIErrorMessage(from: stderr) {
+        return message
+    }
+    if let message = conciseCLIErrorMessage(from: stdout) {
+        return message
+    }
+    return "CLI command failed."
+}
+
+private func conciseCLIErrorMessage(from output: String) -> String? {
+    let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else {
+        return nil
+    }
+    if
+        let payload = parseJSONPayload(from: trimmed),
+        let message = extractCLIErrorMessage(from: payload)
+    {
+        return message
+    }
+    let lines = trimmed
+        .split(whereSeparator: \.isNewline)
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
+    for line in lines {
+        if let normalized = normalizedCLIErrorLine(line) {
+            return normalized
+        }
+    }
+    for line in lines where !shouldSkipCLIErrorLine(line) {
+        guard line != "{", line != "}" else {
+            continue
+        }
+        return line
+    }
+    return nil
+}
+
+private func extractCLIErrorMessage(from payload: [String: Any]) -> String? {
+    if
+        let nestedError = payload["error"] as? [String: Any],
+        let message = normalizedCLIErrorText(nestedError["message"] as? String)
+    {
+        return message
+    }
+    if
+        let nestedError = payload["error"] as? [String: Any],
+        let type = normalizedCLIErrorText(nestedError["type"] as? String),
+        type.lowercased() != "error"
+    {
+        return type
+    }
+    if let message = normalizedCLIErrorText(payload["message"] as? String) {
+        return message
+    }
+    if let message = normalizedCLIErrorText(payload["error"] as? String) {
+        return message
+    }
+    return nil
+}
+
+private func normalizedCLIErrorText(_ text: String?) -> String? {
+    guard var normalized = text?.trimmingCharacters(in: .whitespacesAndNewlines) else {
+        return nil
+    }
+    guard !normalized.isEmpty, normalized != "[object Object]" else {
+        return nil
+    }
+    if let range = normalized.range(of: #"^[A-Za-z0-9_]+Error:\s*"#, options: .regularExpression) {
+        normalized.removeSubrange(range)
+    }
+    normalized = normalized.trimmingCharacters(in: .whitespacesAndNewlines)
+    return normalized.isEmpty ? nil : normalized
+}
+
+private func normalizedCLIErrorLine(_ line: String) -> String? {
+    guard !shouldSkipCLIErrorLine(line) else {
+        return nil
+    }
+    if let range = line.range(of: #"[A-Za-z0-9_]+Error:\s*"#, options: .regularExpression) {
+        let suffix = String(line[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        if !suffix.isEmpty {
+            return suffix
+        }
+    }
+    let signal = line.lowercased()
+    if signal.contains("requested entity was not found")
+        || signal.contains("rate limit")
+        || signal.contains("token limit")
+        || signal.contains("context window")
+        || signal.contains("maximum context length")
+    {
+        return line
+    }
+    return nil
+}
+
+private func shouldSkipCLIErrorLine(_ line: String) -> Bool {
+    let signal = line.lowercased()
+    return signal.hasPrefix("at ")
+        || signal.contains("file:///")
+        || signal.contains("node:internal/")
+        || signal.contains("loaded cached credentials.")
 }
 
 private func densificationPrompt(for request: DensificationRequest) -> String {
@@ -961,14 +1086,7 @@ private struct GeminiCLIProviderClient: ProviderClient {
         try await withProviderWorkPermit(provider: provider, operationName: "request_text") {
             let prompt = promptTextForCLI(request)
             let normalizedModel = normalizedGeminiCLIModel(model)
-            do {
-                return try await runGeminiCommand(prompt: prompt, model: normalizedModel)
-            } catch {
-                guard !normalizedModel.isEmpty, isGeminiModelNotFoundError(error) else {
-                    throw error
-                }
-                return try await runGeminiCommand(prompt: prompt, model: "")
-            }
+            return try await runGeminiCommand(prompt: prompt, model: normalizedModel)
         }
     }
 
@@ -1006,16 +1124,6 @@ private func normalizedGeminiCLIModel(_ model: String) -> String {
     default:
         return normalizedModel
     }
-}
-
-private func isGeminiModelNotFoundError(_ error: Error) -> Bool {
-    guard case let .providerRequestFailed(details) = error as? AppError else {
-        return false
-    }
-    let signal = details.lowercased()
-    return signal.contains("modelnotfounderror")
-        || signal.contains("requested entity was not found")
-        || signal.contains("\"code\": 404")
 }
 
 private func densificationChunkPrompt(
