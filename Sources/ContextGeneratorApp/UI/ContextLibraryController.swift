@@ -51,7 +51,10 @@ final class ContextLibraryController: NSViewController, NSOutlineViewDataSource,
     override func viewDidLoad() {
         super.viewDidLoad()
         setupUI()
-        refreshData()
+        DispatchQueue.main.async { [weak self] in
+            self?.refreshData()
+            self?.applyInitialExpansionState()
+        }
     }
 
     func refreshData() {
