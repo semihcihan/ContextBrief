@@ -4,11 +4,11 @@ import CoreGraphics
 import Foundation
 import Vision
 
-public protocol ContextCapturing {
+public protocol ContextCapturing: Sendable {
     func capture() throws -> (CapturedSnapshot, Data?)
 }
 
-public final class ContextCaptureService: ContextCapturing {
+public final class ContextCaptureService: ContextCapturing, @unchecked Sendable {
     private let maxDepth = 14
     private let maxNodeCount = 9_000
     private let maxLineCount = 12_000
