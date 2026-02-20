@@ -12,10 +12,18 @@ public protocol Densifying {
 public final class DensificationService: Densifying {
     private let session: URLSession
     private let maxDensificationInputTokens: Int
+    private let clientFactory: (ProviderName, URLSession) -> ProviderClient
 
-    public init(session: URLSession = .shared, maxDensificationInputTokens: Int = 64_000) {
+    public init(
+        session: URLSession = .shared,
+        maxDensificationInputTokens: Int = 64_000,
+        clientFactory: @escaping (ProviderName, URLSession) -> ProviderClient = { provider, session in
+            ProviderClientFactory.make(provider: provider, session: session)
+        }
+    ) {
         self.session = session
         self.maxDensificationInputTokens = maxDensificationInputTokens
+        self.clientFactory = clientFactory
     }
 
     public func densify(
@@ -24,13 +32,22 @@ public final class DensificationService: Densifying {
         model: String,
         apiKey: String
     ) async throws -> String {
-        let estimated = TokenCountEstimator.estimate(for: snapshot.combinedText)
+        let inputText: String
+        if
+            let filtered = snapshot.filteredCombinedText?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !filtered.isEmpty
+        {
+            inputText = filtered
+        } else {
+            inputText = snapshot.combinedText
+        }
+        let estimated = TokenCountEstimator.estimate(for: inputText)
         if estimated > maxDensificationInputTokens {
             throw AppError.densificationInputTooLong(estimatedTokens: estimated, limit: maxDensificationInputTokens)
         }
-        let client = ProviderClientFactory.make(provider: provider, session: session)
+        let client = clientFactory(provider, session)
         let request = DensificationRequest(
-            inputText: snapshot.combinedText,
+            inputText: inputText,
             appName: snapshot.appName,
             windowTitle: snapshot.windowTitle
         )
@@ -40,6 +57,6 @@ public final class DensificationService: Densifying {
             apiKey: apiKey,
             model: model
         )
-        return output.isEmpty ? snapshot.combinedText : output
+        return output.isEmpty ? inputText : output
     }
 }

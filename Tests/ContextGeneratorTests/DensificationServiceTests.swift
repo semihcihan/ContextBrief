@@ -1,11 +1,118 @@
 import ContextGenerator
 import XCTest
 
+private final class RecordingProviderClient: ProviderClient {
+    let provider: ProviderName = .openai
+    var densificationRequests: [DensificationRequest] = []
+    var nextResponse: String
+
+    init(nextResponse: String) {
+        self.nextResponse = nextResponse
+    }
+
+    func requestText(request: ProviderTextRequest, apiKey: String, model: String) async throws -> String {
+        nextResponse
+    }
+
+    func densify(request: DensificationRequest, apiKey: String, model: String) async throws -> String {
+        densificationRequests.append(request)
+        return nextResponse
+    }
+}
+
 final class DensificationServiceTests: XCTestCase {
     func testProviderFactoryReturnsClient() {
         XCTAssertNotNil(ProviderClientFactory.make(provider: .openai))
         XCTAssertNotNil(ProviderClientFactory.make(provider: .anthropic))
         XCTAssertNotNil(ProviderClientFactory.make(provider: .gemini))
         XCTAssertNotNil(ProviderClientFactory.make(provider: .apple))
+    }
+
+    func testDensifyUsesFilteredCombinedTextWhenAvailable() async throws {
+        let client = RecordingProviderClient(nextResponse: "dense")
+        let service = DensificationService(
+            clientFactory: { _, _ in
+                client
+            }
+        )
+        let snapshot = makeSnapshot(
+            combinedText: "baseline content",
+            filteredCombinedText: "filtered content"
+        )
+
+        _ = try await service.densify(
+            snapshot: snapshot,
+            provider: .openai,
+            model: "test-model",
+            apiKey: "key"
+        )
+
+        XCTAssertEqual(client.densificationRequests.count, 1)
+        XCTAssertEqual(client.densificationRequests.first?.inputText, "filtered content")
+    }
+
+    func testDensifyFallsBackToBaselineWhenFilteredCombinedTextIsBlank() async throws {
+        let client = RecordingProviderClient(nextResponse: "dense")
+        let service = DensificationService(
+            clientFactory: { _, _ in
+                client
+            }
+        )
+        let snapshot = makeSnapshot(
+            combinedText: "baseline content",
+            filteredCombinedText: "   "
+        )
+
+        _ = try await service.densify(
+            snapshot: snapshot,
+            provider: .openai,
+            model: "test-model",
+            apiKey: "key"
+        )
+
+        XCTAssertEqual(client.densificationRequests.count, 1)
+        XCTAssertEqual(client.densificationRequests.first?.inputText, "baseline content")
+    }
+
+    func testDensifyReturnsChosenInputWhenProviderReturnsEmptyString() async throws {
+        let client = RecordingProviderClient(nextResponse: "")
+        let service = DensificationService(
+            clientFactory: { _, _ in
+                client
+            }
+        )
+        let snapshot = makeSnapshot(
+            combinedText: "baseline content",
+            filteredCombinedText: "filtered content"
+        )
+
+        let output = try await service.densify(
+            snapshot: snapshot,
+            provider: .openai,
+            model: "test-model",
+            apiKey: "key"
+        )
+
+        XCTAssertEqual(output, "filtered content")
+    }
+
+    private func makeSnapshot(combinedText: String, filteredCombinedText: String?) -> CapturedSnapshot {
+        CapturedSnapshot(
+            sourceType: .browserTab,
+            appName: "Safari",
+            bundleIdentifier: "com.apple.Safari",
+            windowTitle: "Example",
+            captureMethod: .hybrid,
+            accessibilityText: combinedText,
+            ocrText: "",
+            combinedText: combinedText,
+            filteredCombinedText: filteredCombinedText,
+            diagnostics: CaptureDiagnostics(
+                accessibilityLineCount: 1,
+                ocrLineCount: 0,
+                processingDurationMs: 10,
+                usedFallbackOCR: false
+            )
+        )
     }
 }

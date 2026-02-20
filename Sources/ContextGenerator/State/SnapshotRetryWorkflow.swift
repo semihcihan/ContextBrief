@@ -58,6 +58,7 @@ public final class SnapshotRetryWorkflow {
             accessibilityText: snapshot.rawContent,
             ocrText: snapshot.ocrContent,
             combinedText: snapshot.rawContent,
+            filteredCombinedText: snapshot.filteredCombinedText,
             diagnostics: CaptureDiagnostics(
                 accessibilityLineCount: snapshot.accessibilityLineCount,
                 ocrLineCount: snapshot.ocrLineCount,
@@ -122,6 +123,7 @@ public final class SnapshotRetryWorkflow {
             windowTitle: snapshot.windowTitle,
             captureMethod: snapshot.captureMethod,
             rawContent: snapshot.rawContent,
+            filteredCombinedText: snapshot.filteredCombinedText,
             ocrContent: snapshot.ocrContent,
             denseContent: denseContent,
             provider: snapshot.provider,

@@ -11,6 +11,7 @@ public struct CapturedSnapshot: Codable, Equatable {
     public let accessibilityText: String
     public let ocrText: String
     public let combinedText: String
+    public let filteredCombinedText: String?
     public let diagnostics: CaptureDiagnostics
 
     public init(
@@ -24,6 +25,7 @@ public struct CapturedSnapshot: Codable, Equatable {
         accessibilityText: String,
         ocrText: String,
         combinedText: String,
+        filteredCombinedText: String? = nil,
         diagnostics: CaptureDiagnostics
     ) {
         self.id = id
@@ -36,6 +38,7 @@ public struct CapturedSnapshot: Codable, Equatable {
         self.accessibilityText = accessibilityText
         self.ocrText = ocrText
         self.combinedText = combinedText
+        self.filteredCombinedText = filteredCombinedText
         self.diagnostics = diagnostics
     }
 }
