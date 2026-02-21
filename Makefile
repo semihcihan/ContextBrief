@@ -12,15 +12,20 @@ VERSION ?= 1.0.0
 BUILD_NUMBER ?= 1
 MIN_MACOS_VERSION ?= 13.0
 LOG ?= 0
+LOG_TERMINAL ?= 0
 DEBUG_ENV :=
 DEVELOPER_DIR ?= $(shell xcode-select -p)
+CONTEXT_GENERATOR_LOG_FILE ?= $(CURDIR)/.logs.txt
 
 ifneq (,$(filter log,$(MAKECMDGOALS)))
 LOG := 1
 endif
 
 ifeq ($(LOG),1)
-DEBUG_ENV := CONTEXT_GENERATOR_DEBUG_LOGS=1 CONTEXT_GENERATOR_TERMINAL_LOGS=1
+DEBUG_ENV := CONTEXT_GENERATOR_DEBUG_LOGS=1 CONTEXT_GENERATOR_LOG_FILE="$(CONTEXT_GENERATOR_LOG_FILE)"
+ifeq ($(LOG_TERMINAL),1)
+DEBUG_ENV := $(DEBUG_ENV) CONTEXT_GENERATOR_TERMINAL_LOGS=1
+endif
 endif
 
 .PHONY: help dev dev-stop log app-icon release-app release-dmg run-release-app
@@ -43,7 +48,8 @@ help:
 	@printf '%s\n' \
 		'Available targets:' \
 		'  make dev                                  Run app with file watching + auto restart' \
-		'  make dev log                              Same as dev, with debug logging enabled' \
+		'  make dev log                              Same as dev, with debug logging to .logs.txt (no terminal)' \
+		'  make dev log LOG_TERMINAL=1               Same as dev log, also print logs to terminal' \
 		'  make dev-stop                             Stop watcher and running app process' \
 		'  make app-icon                             Regenerate local AppIcon.icns + AppIcon.iconset from docs/app-icon.html' \
 		'  make release-app VERSION=1.0.0 BUILD_NUMBER=1' \
@@ -54,6 +60,8 @@ help:
 		'                                            Build release app and run it' \
 		'' \
 		'Config variables (override inline if needed):' \
+		'  LOG=0|1           enable debug + file logging (make dev log)' \
+		'  LOG_TERMINAL=1    also print logs to terminal (e.g. make dev log LOG_TERMINAL=1)' \
 		'  DEVELOPER_DIR=$$(xcode-select -p)' \
 		'  VERSION=1.0.0 BUILD_NUMBER=1' \
 		'  BUNDLE_IDENTIFIER=com.semihcihan.contextgenerator'

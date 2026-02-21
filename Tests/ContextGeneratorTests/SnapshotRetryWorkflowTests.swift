@@ -2,14 +2,14 @@ import ContextGenerator
 import XCTest
 
 private final class RetrySuccessDensifier: Densifying {
-    func densify(snapshot: CapturedSnapshot, provider: ProviderName, model: String, apiKey: String) async throws -> String {
+    func densify(snapshot: CapturedSnapshot, provider: ProviderName, model: String, apiKey: String) async throws -> (content: String, title: String?) {
         XCTAssertEqual(provider, .codex)
-        return "dense-after-manual-retry"
+        return ("dense-after-manual-retry", nil)
     }
 }
 
 private final class RetryFailureDensifier: Densifying {
-    func densify(snapshot: CapturedSnapshot, provider: ProviderName, model: String, apiKey: String) async throws -> String {
+    func densify(snapshot: CapturedSnapshot, provider: ProviderName, model: String, apiKey: String) async throws -> (content: String, title: String?) {
         XCTAssertEqual(provider, .codex)
         throw AppError.providerRequestTransientFailure("manual retry failed")
     }

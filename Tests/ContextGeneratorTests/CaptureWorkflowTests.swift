@@ -2,27 +2,27 @@ import ContextGenerator
 import XCTest
 
 private final class MockDensifier: Densifying {
-    func densify(snapshot: CapturedSnapshot, provider: ProviderName, model: String, apiKey: String) async throws -> String {
+    func densify(snapshot: CapturedSnapshot, provider: ProviderName, model: String, apiKey: String) async throws -> (content: String, title: String?) {
         XCTAssertEqual(provider, .codex)
-        return "dense-output"
+        return ("dense-output", nil)
     }
 }
 
 private final class FlakyDensifier: Densifying {
     private(set) var calls = 0
 
-    func densify(snapshot: CapturedSnapshot, provider: ProviderName, model: String, apiKey: String) async throws -> String {
+    func densify(snapshot: CapturedSnapshot, provider: ProviderName, model: String, apiKey: String) async throws -> (content: String, title: String?) {
         XCTAssertEqual(provider, .codex)
         calls += 1
         if calls == 1 {
             throw AppError.providerRequestTransientFailure("temporary provider error")
         }
-        return "dense-after-retry"
+        return ("dense-after-retry", nil)
     }
 }
 
 private final class AlwaysFailingDensifier: Densifying {
-    func densify(snapshot: CapturedSnapshot, provider: ProviderName, model: String, apiKey: String) async throws -> String {
+    func densify(snapshot: CapturedSnapshot, provider: ProviderName, model: String, apiKey: String) async throws -> (content: String, title: String?) {
         XCTAssertEqual(provider, .codex)
         throw AppError.providerRequestTransientFailure("provider unavailable")
     }
@@ -31,7 +31,7 @@ private final class AlwaysFailingDensifier: Densifying {
 private final class NonRetryableFailureDensifier: Densifying {
     private(set) var calls = 0
 
-    func densify(snapshot: CapturedSnapshot, provider: ProviderName, model: String, apiKey: String) async throws -> String {
+    func densify(snapshot: CapturedSnapshot, provider: ProviderName, model: String, apiKey: String) async throws -> (content: String, title: String?) {
         XCTAssertEqual(provider, .codex)
         calls += 1
         throw AppError.providerRequestRejected("model does not support this request")

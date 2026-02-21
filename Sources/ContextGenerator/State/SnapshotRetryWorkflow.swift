@@ -61,7 +61,7 @@ public final class SnapshotRetryWorkflow {
             )
         )
         do {
-            let dense = try await densificationService.densify(
+            let (dense, _) = try await densificationService.densify(
                 snapshot: capturedSnapshot,
                 provider: provider,
                 model: model,

@@ -4,11 +4,12 @@ public struct CaptureWorkflowResult {
     public let context: Context
     public let snapshot: Snapshot
     public let capturedSnapshot: CapturedSnapshot
+    public let suggestedSnapshotTitle: String?
 }
 
 public final class CaptureWorkflow {
     private enum DensificationOutcome {
-        case success(content: String, retriesPerformed: Int)
+        case success(content: String, title: String?, retriesPerformed: Int)
         case failed(message: String, retriesPerformed: Int)
     }
 
@@ -47,13 +48,15 @@ public final class CaptureWorkflow {
         let key = try keychain.get("api.\(provider.rawValue)") ?? ""
 
         let snapshot: Snapshot
+        let suggestedTitle: String?
         switch await densifyWithRetry(
             snapshot: capturedSnapshot,
             provider: provider,
             model: model,
             apiKey: key
         ) {
-        case .success(let dense, let retriesPerformed):
+        case .success(let dense, let title, let retriesPerformed):
+            suggestedTitle = title
             snapshot = try sessionManager.appendSnapshot(
                 rawCapture: capturedSnapshot,
                 denseContent: dense,
@@ -64,6 +67,7 @@ public final class CaptureWorkflow {
                 lastAttemptAt: Date()
             )
         case .failed(let message, let retriesPerformed):
+            suggestedTitle = nil
             snapshot = try sessionManager.appendSnapshot(
                 rawCapture: capturedSnapshot,
                 denseContent: "",
@@ -84,7 +88,8 @@ public final class CaptureWorkflow {
         return CaptureWorkflowResult(
             context: context,
             snapshot: snapshot,
-            capturedSnapshot: capturedSnapshot
+            capturedSnapshot: capturedSnapshot,
+            suggestedSnapshotTitle: suggestedTitle
         )
     }
 
@@ -97,7 +102,7 @@ public final class CaptureWorkflow {
         var retriesPerformed = 0
         for attempt in 1 ... maxDensificationAttempts {
             do {
-                let dense = try await densificationService.densify(
+                let (dense, title) = try await densificationService.densify(
                     snapshot: snapshot,
                     provider: provider,
                     model: model,
@@ -106,7 +111,7 @@ public final class CaptureWorkflow {
                 AppLogger.debug(
                     "Densification succeeded [provider=\(provider.rawValue) retriesPerformed=\(retriesPerformed) snapshot=\(snapshot.id.uuidString)]"
                 )
-                return .success(content: dense, retriesPerformed: retriesPerformed)
+                return .success(content: dense, title: title, retriesPerformed: retriesPerformed)
             } catch {
                 if attempt < maxDensificationAttempts, shouldRetryDensification(after: error) {
                     retriesPerformed += 1

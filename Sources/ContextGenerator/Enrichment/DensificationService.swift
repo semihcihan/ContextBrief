@@ -6,7 +6,7 @@ public protocol Densifying {
         provider: ProviderName,
         model: String,
         apiKey: String
-    ) async throws -> String
+    ) async throws -> (content: String, title: String?)
 }
 
 public final class DensificationService: Densifying {
@@ -31,7 +31,7 @@ public final class DensificationService: Densifying {
         provider: ProviderName,
         model: String,
         apiKey: String
-    ) async throws -> String {
+    ) async throws -> (content: String, title: String?) {
         let inputText: String
         if
             let filtered = snapshot.filteredCombinedText?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -51,12 +51,12 @@ public final class DensificationService: Densifying {
             appName: snapshot.appName,
             windowTitle: snapshot.windowTitle
         )
-
-        let output = try await client.densify(
+        let result = try await client.densify(
             request: request,
             apiKey: apiKey,
             model: model
         )
-        return output.isEmpty ? inputText : output
+        let content = result.content.isEmpty ? inputText : result.content
+        return (content, result.title)
     }
 }

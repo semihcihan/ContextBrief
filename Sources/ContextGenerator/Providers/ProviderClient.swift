@@ -12,6 +12,16 @@ public struct DensificationRequest {
     }
 }
 
+public struct DensificationResult {
+    public let content: String
+    public let title: String?
+
+    public init(content: String, title: String?) {
+        self.content = content
+        self.title = title
+    }
+}
+
 public struct ProviderTextRequest {
     static let commonPrompt = [
         "Keep meaningful facts, intent, actions, outcomes, constraints, and errors.",
@@ -32,11 +42,12 @@ public struct ProviderTextRequest {
 public protocol ProviderClient {
     var provider: ProviderName { get }
     func requestText(request: ProviderTextRequest, apiKey: String, model: String) async throws -> String
-    func densify(request: DensificationRequest, apiKey: String, model: String) async throws -> String
+    func densify(request: DensificationRequest, apiKey: String, model: String) async throws -> DensificationResult
+    func requestDensification(request: DensificationRequest, apiKey: String, model: String) async throws -> DensificationResult
 }
 
 public extension ProviderClient {
-    func densify(request: DensificationRequest, apiKey: String, model: String) async throws -> String {
+    func densify(request: DensificationRequest, apiKey: String, model: String) async throws -> DensificationResult {
         let startedAt = Date()
         try await forceFailure()
         if DevelopmentConfig.shared.localDebugResponsesEnabled {
@@ -46,20 +57,13 @@ public extension ProviderClient {
             AppLogger.debug(
                 "Densification completed [provider=\(provider.rawValue) runs=1 seconds=\(formattedElapsedSeconds(since: startedAt))]"
             )
-            return output
+            return DensificationResult(content: output, title: nil)
         }
-        let output = try await requestText(
-            request: ProviderTextRequest(
-                systemInstruction: densificationSystemInstruction,
-                prompt: densificationPrompt(for: request)
-            ),
-            apiKey: apiKey,
-            model: model
-        )
+        let result = try await requestDensification(request: request, apiKey: apiKey, model: model)
         AppLogger.debug(
             "Densification completed [provider=\(provider.rawValue) runs=1 seconds=\(formattedElapsedSeconds(since: startedAt))]"
         )
-        return output
+        return result
     }
 }
 
@@ -589,11 +593,11 @@ private func retryDelayNanoseconds(forAttempt attempt: Int) -> UInt64 {
     return min(providerRetryMaxDelayNanoseconds, baseDelay + jitter)
 }
 
-private func withRetriedProviderRequest(
+private func withRetriedProviderRequest<T>(
     provider: ProviderName,
     model: String,
-    _ operation: (_ timeoutSeconds: TimeInterval) async throws -> String
-) async throws -> String {
+    _ operation: (_ timeoutSeconds: TimeInterval) async throws -> T
+) async throws -> T {
     let startedAt = Date()
     var attempt = 1
     var lastError: Error?
@@ -679,7 +683,7 @@ private func parseJSONPayload(from rawOutput: String) -> [String: Any]? {
 }
 
 private func extractCLIText(from payload: [String: Any]) -> String? {
-    let keys = ["result", "response", "output", "message", "text"]
+    let keys = ["content", "result", "response", "output", "message", "text"]
     for key in keys {
         if
             let value = payload[key] as? String,
@@ -689,6 +693,16 @@ private func extractCLIText(from payload: [String: Any]) -> String? {
         }
     }
     return nil
+}
+
+private func extractCLITitle(from payload: [String: Any]) -> String? {
+    guard
+        let value = payload["title"] as? String,
+        !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    else {
+        return nil
+    }
+    return String(value.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80))
 }
 
 private func conciseCLIErrorMessage(stderr: String, stdout: String) -> String {
@@ -797,9 +811,28 @@ private func shouldSkipCLIErrorLine(_ line: String) -> Bool {
         || signal.contains("loaded cached credentials.")
 }
 
+private let densificationJSONSchema = """
+{"type":"object","properties":{"content":{"type":"string","description":"Densified extract of the captured UI text"},"title":{"type":"string","description":"Short title for the snapshot, max 6 words"}},"required":["content","title"],"additionalProperties":false}
+"""
+
 private func densificationPrompt(for request: DensificationRequest) -> String {
     [
         "Extract essential context from captured UI text.",
+        "Also provide a short title (max 6 words) for this snapshot.",
+        "Respond with a JSON object with two fields: \"content\" (the densified text) and \"title\" (the short title).",
+        "",
+        "App: \(request.appName)",
+        "Window: \(request.windowTitle)",
+        "",
+        request.inputText
+    ].joined(separator: "\n")
+}
+
+private func densificationPromptForStructuredOutput(for request: DensificationRequest) -> String {
+    [
+        "Extract essential context from captured UI text.",
+        "Provide a short title (max 6 words) for this snapshot.",
+        "",
         "App: \(request.appName)",
         "Window: \(request.windowTitle)",
         "",
@@ -809,6 +842,79 @@ private func densificationPrompt(for request: DensificationRequest) -> String {
 
 private func localDebugPrefixText(_ value: String, maxCharacters: Int) -> String {
     String(value.prefix(maxCharacters))
+}
+
+private func logDensificationRawOutput(raw: String) {
+    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return }
+    if
+        let payload = parseJSONPayload(from: trimmed),
+        let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys]),
+        let pretty = String(data: data, encoding: .utf8)
+    {
+        AppLogger.filePrintMultiline(level: "DEBUG", headline: "Densification raw response (JSON):", body: pretty)
+    } else {
+        AppLogger.filePrintMultiline(level: "DEBUG", headline: "Densification raw response:", body: trimmed)
+    }
+}
+
+private func parseJsonFromOutput(_ output: String) -> [String: Any]? {
+    let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return nil }
+    if trimmed.first == "{" {
+        return parseJSONPayload(from: trimmed)
+    }
+    if let range = trimmed.range(of: "\n{", options: .backwards) {
+        let fromBrace = trimmed.index(range.lowerBound, offsetBy: 1)
+        var candidate = String(trimmed[fromBrace...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        if candidate.hasSuffix("```") {
+            candidate = String(candidate.dropLast(3)).trimmingCharacters(in: .whitespacesAndNewlines)
+        } else if candidate.hasSuffix("\n```") {
+            candidate = String(candidate.dropLast(4)).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return parseJSONPayload(from: candidate)
+    }
+    return nil
+}
+
+private func extractDensificationFromEmbeddedString(_ raw: String) -> (content: String, title: String?)? {
+    guard let payload = parseJsonFromOutput(raw) else { return nil }
+    let content = extractCLIText(from: payload) ?? ""
+    let title = extractCLITitle(from: payload)
+    return content.isEmpty ? nil : (content, title)
+}
+
+private func parseDensificationResponse(stdout: String, fileContent: String? = nil) -> DensificationResult {
+    let trimmedStdout = stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+    let trimmedFile = fileContent?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
+    let source = trimmedFile ?? trimmedStdout
+    logDensificationRawOutput(raw: source)
+    let fallbackContent = (trimmedFile ?? trimmedStdout).isEmpty ? "" : (trimmedFile ?? trimmedStdout)
+    if let payload = parseJSONPayload(from: source), !source.isEmpty {
+        var content = extractCLIText(from: payload) ?? fallbackContent
+        var title = extractCLITitle(from: payload)
+        if title == nil, !content.isEmpty, let inner = extractDensificationFromEmbeddedString(content) {
+            content = inner.content
+            title = inner.title
+        }
+        return DensificationResult(
+            content: content.isEmpty ? fallbackContent : content,
+            title: title
+        )
+    }
+    if let payload = parseJSONPayload(from: trimmedStdout) {
+        var content = extractCLIText(from: payload) ?? fallbackContent
+        var title = extractCLITitle(from: payload)
+        if title == nil, !content.isEmpty, let inner = extractDensificationFromEmbeddedString(content) {
+            content = inner.content
+            title = inner.title
+        }
+        return DensificationResult(
+            content: content.isEmpty ? fallbackContent : content,
+            title: title
+        )
+    }
+    return DensificationResult(content: fallbackContent, title: nil)
 }
 
 private struct CodexCLIProviderClient: ProviderClient {
@@ -864,6 +970,54 @@ private struct CodexCLIProviderClient: ProviderClient {
             }
         }
     }
+
+    func requestDensification(request: DensificationRequest, apiKey: String, model: String) async throws -> DensificationResult {
+        let textRequest = ProviderTextRequest(
+            systemInstruction: densificationSystemInstruction,
+            prompt: densificationPromptForStructuredOutput(for: request)
+        )
+        let prompt = try validatedPromptTextForCLI(textRequest, provider: provider)
+        let normalizedModel = try normalizedCLIModel(for: provider, rawModel: model)
+        let binary = resolveCLIBinary(for: provider)
+        return try await withRetriedProviderRequest(provider: provider, model: normalizedModel) { timeoutSeconds in
+            try await withProviderWorkPermit(provider: provider, operationName: "request_densification") {
+                let temporaryDirectory = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("contextbrief-codex-\(UUID().uuidString)", isDirectory: true)
+                try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+                defer {
+                    try? FileManager.default.removeItem(at: temporaryDirectory)
+                }
+                let outputPath = temporaryDirectory.appendingPathComponent("last-message.txt")
+                let schemaPath = temporaryDirectory.appendingPathComponent("densify-schema.json")
+                try densificationJSONSchema.write(to: schemaPath, atomically: true, encoding: .utf8)
+                var arguments = [
+                    "exec",
+                    "--skip-git-repo-check",
+                    "--json",
+                    "--output-schema", schemaPath.path,
+                    "--output-last-message", outputPath.path,
+                    "--ask-for-approval", "never",
+                    "--sandbox", "read-only",
+                    "-"
+                ]
+                if !normalizedModel.isEmpty {
+                    arguments.insert(contentsOf: ["-m", normalizedModel], at: 1)
+                }
+                let result = try await runCLICommand(
+                    provider: provider,
+                    binary: binary,
+                    arguments: arguments,
+                    input: prompt,
+                    model: normalizedModel.nonEmpty,
+                    timeoutSeconds: timeoutSeconds
+                )
+                let fileText = try? String(contentsOf: outputPath, encoding: .utf8)
+                let parsed = parseDensificationResponse(stdout: result.stdout, fileContent: fileText)
+                let content = try normalizedCLIResponseText(parsed.content, provider: provider)
+                return DensificationResult(content: content, title: parsed.title)
+            }
+        }
+    }
 }
 
 private struct ClaudeCLIProviderClient: ProviderClient {
@@ -897,6 +1051,39 @@ private struct ClaudeCLIProviderClient: ProviderClient {
                     return try normalizedCLIResponseText(text, provider: provider)
                 }
                 return try normalizedCLIResponseText(result.stdout, provider: provider)
+            }
+        }
+    }
+
+    func requestDensification(request: DensificationRequest, apiKey: String, model: String) async throws -> DensificationResult {
+        let textRequest = ProviderTextRequest(
+            systemInstruction: densificationSystemInstruction,
+            prompt: densificationPromptForStructuredOutput(for: request)
+        )
+        let prompt = try validatedPromptTextForCLI(textRequest, provider: provider)
+        let normalizedModel = try normalizedCLIModel(for: provider, rawModel: model)
+        let binary = resolveCLIBinary(for: provider)
+        return try await withRetriedProviderRequest(provider: provider, model: normalizedModel) { timeoutSeconds in
+            try await withProviderWorkPermit(provider: provider, operationName: "request_densification") {
+                var arguments = [
+                    "-p", prompt,
+                    "--output-format", "json",
+                    "--json-schema", densificationJSONSchema
+                ]
+                if !normalizedModel.isEmpty {
+                    arguments.append(contentsOf: ["--model", normalizedModel])
+                }
+                let result = try await runCLICommand(
+                    provider: provider,
+                    binary: binary,
+                    arguments: arguments,
+                    input: nil,
+                    model: normalizedModel.nonEmpty,
+                    timeoutSeconds: timeoutSeconds
+                )
+                let parsed = parseDensificationResponse(stdout: result.stdout)
+                let content = try normalizedCLIResponseText(parsed.content, provider: provider)
+                return DensificationResult(content: content, title: parsed.title)
             }
         }
     }
@@ -969,6 +1156,73 @@ private struct GeminiCLIProviderClient: ProviderClient {
             return try normalizedCLIResponseText(text, provider: provider)
         }
         return try normalizedCLIResponseText(result.stdout, provider: provider)
+    }
+
+    func requestDensification(request: DensificationRequest, apiKey: String, model: String) async throws -> DensificationResult {
+        let textRequest = ProviderTextRequest(
+            systemInstruction: densificationSystemInstruction,
+            prompt: densificationPrompt(for: request)
+        )
+        let prompt = try validatedPromptTextForCLI(textRequest, provider: provider)
+        let normalizedModel = try normalizedCLIModel(for: provider, rawModel: model)
+        let binary = resolveCLIBinary(for: provider)
+        let candidateModels = geminiFallbackModelCandidates(for: normalizedModel)
+        let retryLabel = normalizedModel.nonEmpty ?? "default"
+        return try await withRetriedProviderRequest(provider: provider, model: retryLabel) { timeoutSeconds in
+            try await withProviderWorkPermit(provider: provider, operationName: "request_densification") {
+                var lastError: Error?
+                for candidate in candidateModels {
+                    do {
+                        let stdout = try await runGeminiCommandRaw(
+                            prompt: prompt,
+                            model: candidate,
+                            binary: binary,
+                            timeoutSeconds: timeoutSeconds
+                        )
+                        let parsed = parseDensificationResponse(stdout: stdout)
+                        let content = try normalizedCLIResponseText(parsed.content, provider: provider)
+                        return DensificationResult(content: content, title: parsed.title)
+                    } catch {
+                        lastError = error
+                        guard shouldFallbackGeminiModel(after: error) else {
+                            throw error
+                        }
+                        AppLogger.debug(
+                            "Gemini model fallback [requested=\(retryLabel) fallback=\(candidate)]"
+                        )
+                    }
+                }
+                if let appError = lastError as? AppError {
+                    throw appError
+                }
+                throw AppError.providerRequestRejected("Gemini CLI request failed.")
+            }
+        }
+    }
+
+    private func runGeminiCommandRaw(
+        prompt: String,
+        model: String,
+        binary: String,
+        timeoutSeconds: TimeInterval
+    ) async throws -> String {
+        var arguments = [
+            "--output-format", "json",
+            "--prompt", prompt
+        ]
+        if !model.isEmpty {
+            arguments.append(contentsOf: ["--model", model])
+        }
+        let result = try await runCLICommand(
+            provider: provider,
+            binary: binary,
+            arguments: arguments,
+            input: nil,
+            model: model.nonEmpty,
+            timeoutSeconds: timeoutSeconds,
+            environmentOverrides: resolvedGeminiEnvironmentOverrides()
+        )
+        return result.stdout
     }
 }
 
