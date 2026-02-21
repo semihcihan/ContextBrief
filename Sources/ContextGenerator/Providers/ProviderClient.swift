@@ -72,7 +72,7 @@ private extension ProviderClient {
         let randomValue = Double.random(in: 0 ... 1)
         if randomValue < forcedFailureChance {
             try await Task.sleep(nanoseconds: localDebugResponseDelayNanoseconds)
-            throw AppError.providerRequestFailed("Forced provider failure for debugging.")
+            throw AppError.providerRequestTransientFailure("Forced provider failure for debugging.")
         }
     }
 }
@@ -92,8 +92,15 @@ public enum ProviderClientFactory {
 }
 
 private let providerRequestTimeoutSeconds: TimeInterval = 60
+private let providerRequestOverallTimeoutSeconds: TimeInterval = 90
+private let providerRequestMaxAttempts = 3
+private let providerRetryBaseDelayNanoseconds: UInt64 = 400_000_000
+private let providerRetryMaxDelayNanoseconds: UInt64 = 2_000_000_000
 private let localDebugResponseDelayNanoseconds: UInt64 = 3_000_000_000
 private let localDebugDensificationCharacterLimit = 200
+private let maxCLIPromptCharacters = 800_000
+private let maxCLIResponseCharacters = 200_000
+private let maxCLIErrorSnippetCharacters = 600
 private let densificationSystemInstruction = "You produce concise, complete context with no missing key information."
 
 private func providerWorkLimit(for provider: ProviderName) -> Int {
@@ -222,6 +229,101 @@ private func promptTextForCLI(_ request: ProviderTextRequest) -> String {
     return request.prompt
 }
 
+private func validatedPromptTextForCLI(_ request: ProviderTextRequest, provider: ProviderName) throws -> String {
+    let prompt = promptTextForCLI(request)
+    let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else {
+        throw AppError.providerRequestRejected("\(provider.rawValue.capitalized) CLI prompt is empty.")
+    }
+    guard trimmed.count <= maxCLIPromptCharacters else {
+        throw AppError.providerRequestRejected(
+            "\(provider.rawValue.capitalized) CLI prompt is too large (\(trimmed.count) characters)."
+        )
+    }
+    return trimmed
+}
+
+private func normalizedCLIModel(for provider: ProviderName, rawModel: String) throws -> String {
+    let normalized = rawModel.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !normalized.isEmpty else {
+        throw AppError.providerRequestRejected("Missing model id for \(provider.rawValue).")
+    }
+    return normalized
+}
+
+private func orderedUnique(_ values: [String]) -> [String] {
+    var seen = Set<String>()
+    var ordered: [String] = []
+    for value in values {
+        guard !value.isEmpty else {
+            continue
+        }
+        let key = value.lowercased()
+        guard !seen.contains(key) else {
+            continue
+        }
+        seen.insert(key)
+        ordered.append(value)
+    }
+    return ordered
+}
+
+private func geminiFallbackModelCandidates(for model: String) -> [String] {
+    guard !model.isEmpty else {
+        return [""]
+    }
+    let lower = model.lowercased()
+    var candidates = [model]
+    if lower.hasSuffix("-preview") {
+        candidates.append(String(model.dropLast("-preview".count)))
+    }
+    if let expRange = lower.range(of: "-exp") {
+        candidates.append(String(model[..<expRange.lowerBound]))
+    }
+    if lower.contains("gemini-3") {
+        if lower.contains("flash") {
+            candidates.append("gemini-2.5-flash")
+        } else if lower.contains("pro") {
+            candidates.append("gemini-2.5-pro")
+        } else {
+            candidates.append("gemini-2.5-flash")
+        }
+    }
+    if lower.contains("flash") {
+        candidates.append("gemini-2.5-flash")
+    }
+    return orderedUnique(candidates)
+}
+
+private func suggestedModels(for provider: ProviderName, requestedModel: String) -> [String] {
+    switch provider {
+    case .gemini:
+        let normalizedRequestedModel = requestedModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        if normalizedRequestedModel.isEmpty || normalizedRequestedModel == "selected model" {
+            return ["gemini-2.5-flash", "gemini-2.5-pro"]
+        }
+        return orderedUnique(geminiFallbackModelCandidates(for: normalizedRequestedModel).prefix(3).map { $0 })
+    case .codex:
+        return ["gpt-5", "gpt-5-mini"]
+    case .claude:
+        return ["sonnet", "opus"]
+    }
+}
+
+private func normalizedCLIResponseText(_ value: String, provider: ProviderName) throws -> String {
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else {
+        throw AppError.providerRequestTransientFailure("\(provider.rawValue.capitalized) CLI returned an empty response.")
+    }
+    if trimmed.count <= maxCLIResponseCharacters {
+        return trimmed
+    }
+    AppLogger.debug(
+        "\(provider.rawValue.capitalized) CLI response exceeded \(maxCLIResponseCharacters) characters and was truncated."
+    )
+    return String(trimmed.prefix(maxCLIResponseCharacters))
+}
+
 private func resolveCLIBinary(for provider: ProviderName) -> String {
     let environment = ProcessInfo.processInfo.environment
     switch provider {
@@ -235,10 +337,13 @@ private func resolveCLIBinary(for provider: ProviderName) -> String {
 }
 
 private func runCLICommand(
+    provider: ProviderName,
     binary: String,
     arguments: [String],
     input: String?,
-    timeoutSeconds: TimeInterval = providerRequestTimeoutSeconds
+    model: String?,
+    timeoutSeconds: TimeInterval = providerRequestTimeoutSeconds,
+    environmentOverrides: [String: String] = [:]
 ) async throws -> CLICommandResult {
     try await withCheckedThrowingContinuation { continuation in
         let process = Process()
@@ -266,6 +371,13 @@ private func runCLICommand(
             processArguments.insert(binary, at: 0)
         }
         process.arguments = processArguments
+        if !environmentOverrides.isEmpty {
+            var mergedEnvironment = ProcessInfo.processInfo.environment
+            for (key, value) in environmentOverrides {
+                mergedEnvironment[key] = value
+            }
+            process.environment = mergedEnvironment
+        }
 
         let timeoutWorkItem = DispatchWorkItem {
             executionState.markTimeoutTriggered()
@@ -286,8 +398,9 @@ private func runCLICommand(
             if executionState.didTimeout() {
                 resumeOnce(
                     .failure(
-                        AppError.providerRequestFailed(
-                            "CLI command timed out after \(Int(timeoutSeconds)) seconds."
+                        AppError.providerRequestTimedOut(
+                            provider: provider,
+                            timeoutSeconds: max(1, Int(timeoutSeconds.rounded()))
                         )
                     )
                 )
@@ -296,7 +409,16 @@ private func runCLICommand(
 
             guard terminatedProcess.terminationStatus == 0 else {
                 let details = conciseCLIErrorMessage(stderr: stderrTrimmed, stdout: stdoutTrimmed)
-                resumeOnce(.failure(AppError.providerRequestFailed(details)))
+                resumeOnce(
+                    .failure(
+                        classifyCLIProcessFailure(
+                            provider: provider,
+                            binary: binary,
+                            model: model,
+                            details: details
+                        )
+                    )
+                )
                 return
             }
 
@@ -307,11 +429,7 @@ private func runCLICommand(
             try process.run()
         } catch {
             resumeOnce(
-                .failure(
-                    AppError.providerRequestFailed(
-                        "Unable to start CLI command \(binary): \(error.localizedDescription)"
-                    )
-                )
+                .failure(classifyCLIStartupFailure(provider: provider, binary: binary, error: error))
             )
             return
         }
@@ -327,6 +445,205 @@ private func runCLICommand(
         DispatchQueue.global(qos: .userInitiated)
             .asyncAfter(deadline: .now() + timeoutSeconds, execute: timeoutWorkItem)
     }
+}
+
+private func boundedSnippet(_ value: String, maxCharacters: Int) -> String {
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard trimmed.count > maxCharacters else {
+        return trimmed
+    }
+    return String(trimmed.prefix(maxCharacters))
+}
+
+private func containsAnySignal(_ value: String, signals: [String]) -> Bool {
+    signals.contains { value.contains($0) }
+}
+
+private func isAuthenticationSignal(_ signal: String) -> Bool {
+    containsAnySignal(
+        signal,
+        signals: [
+            "auth",
+            "unauthorized",
+            "forbidden",
+            "invalid api key",
+            "not logged in",
+            "login required",
+            "permission denied"
+        ]
+    )
+}
+
+private func isModelUnavailableSignal(_ signal: String) -> Bool {
+    containsAnySignal(
+        signal,
+        signals: [
+            "model not found",
+            "unknown model",
+            "invalid model",
+            "requested entity was not found",
+            "unsupported model",
+            "not available"
+        ]
+    )
+}
+
+private func isTransientCLIErrorSignal(_ signal: String) -> Bool {
+    containsAnySignal(
+        signal,
+        signals: [
+            "timed out",
+            "timeout",
+            "rate limit",
+            "temporarily unavailable",
+            "econnreset",
+            "etimedout",
+            "eai_again",
+            "connection reset",
+            "503",
+            "502",
+            "429",
+            "empty response"
+        ]
+    )
+}
+
+private func isCLIUsageSignal(_ signal: String) -> Bool {
+    containsAnySignal(
+        signal,
+        signals: [
+            "unknown option",
+            "invalid option",
+            "usage:",
+            "unexpected argument",
+            "requires an argument"
+        ]
+    )
+}
+
+private func isBinaryMissingSignal(_ signal: String) -> Bool {
+    containsAnySignal(
+        signal,
+        signals: [
+            "command not found",
+            "no such file or directory",
+            "could not find executable"
+        ]
+    )
+}
+
+private func classifyCLIStartupFailure(provider: ProviderName, binary: String, error: Error) -> AppError {
+    let details = boundedSnippet(error.localizedDescription, maxCharacters: maxCLIErrorSnippetCharacters)
+    let signal = details.lowercased()
+    if isBinaryMissingSignal(signal) {
+        return AppError.providerBinaryNotFound(provider: provider, binary: binary)
+    }
+    return AppError.providerRequestRejected(
+        "Unable to start \(provider.rawValue.capitalized) CLI command (\(binary)): \(details)"
+    )
+}
+
+private func classifyCLIProcessFailure(
+    provider: ProviderName,
+    binary: String,
+    model: String?,
+    details: String
+) -> AppError {
+    let boundedDetails = boundedSnippet(details, maxCharacters: maxCLIErrorSnippetCharacters)
+    let signal = boundedDetails.lowercased()
+    if isBinaryMissingSignal(signal) {
+        return AppError.providerBinaryNotFound(provider: provider, binary: binary)
+    }
+    if isAuthenticationSignal(signal) {
+        return AppError.providerAuthenticationFailed(provider: provider, details: boundedDetails)
+    }
+    if isModelUnavailableSignal(signal) {
+        let requestedModel = (model?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty) ?? "selected model"
+        return AppError.providerModelUnavailable(
+            provider: provider,
+            model: requestedModel,
+            suggestions: suggestedModels(for: provider, requestedModel: requestedModel)
+        )
+    }
+    if isTransientCLIErrorSignal(signal) {
+        return AppError.providerRequestTransientFailure(boundedDetails)
+    }
+    if isCLIUsageSignal(signal) {
+        return AppError.providerRequestRejected(boundedDetails)
+    }
+    return AppError.providerRequestRejected(boundedDetails)
+}
+
+private func isRetryableProviderRequestError(_ error: Error) -> Bool {
+    guard let appError = error as? AppError else {
+        return false
+    }
+    return appError.isRetryableProviderFailure
+}
+
+private func retryDelayNanoseconds(forAttempt attempt: Int) -> UInt64 {
+    let exponent = max(0, attempt - 1)
+    let multiplier = UInt64(1 << min(exponent, 10))
+    let baseDelay = min(providerRetryMaxDelayNanoseconds, providerRetryBaseDelayNanoseconds * multiplier)
+    let jitter = UInt64.random(in: 0 ... 250_000_000)
+    return min(providerRetryMaxDelayNanoseconds, baseDelay + jitter)
+}
+
+private func withRetriedProviderRequest(
+    provider: ProviderName,
+    model: String,
+    _ operation: (_ timeoutSeconds: TimeInterval) async throws -> String
+) async throws -> String {
+    let startedAt = Date()
+    var attempt = 1
+    var lastError: Error?
+    while attempt <= providerRequestMaxAttempts {
+        let elapsed = Date().timeIntervalSince(startedAt)
+        let remaining = providerRequestOverallTimeoutSeconds - elapsed
+        if remaining <= 0 {
+            throw AppError.providerRequestTimedOut(
+                provider: provider,
+                timeoutSeconds: Int(providerRequestOverallTimeoutSeconds)
+            )
+        }
+        let attemptTimeout = max(1, min(providerRequestTimeoutSeconds, remaining))
+        do {
+            return try await operation(attemptTimeout)
+        } catch {
+            if error is CancellationError {
+                throw error
+            }
+            lastError = error
+            guard attempt < providerRequestMaxAttempts, isRetryableProviderRequestError(error) else {
+                throw error
+            }
+            let remainingAfterFailure = providerRequestOverallTimeoutSeconds - Date().timeIntervalSince(startedAt)
+            if remainingAfterFailure <= 0 {
+                break
+            }
+            let maxDelaySeconds = max(0, remainingAfterFailure - 0.05)
+            let cappedDelay = min(
+                retryDelayNanoseconds(forAttempt: attempt),
+                UInt64(maxDelaySeconds * 1_000_000_000)
+            )
+            if cappedDelay == 0 {
+                break
+            }
+            AppLogger.debug(
+                "Retrying provider request [provider=\(provider.rawValue) model=\(model.isEmpty ? "default" : model) attempt=\(attempt + 1)/\(providerRequestMaxAttempts)]"
+            )
+            do {
+                try await Task.sleep(nanoseconds: cappedDelay)
+            } catch {
+                throw error
+            }
+            attempt += 1
+        }
+    }
+    if let appError = lastError as? AppError {
+        throw appError
+    }
+    throw AppError.providerRequestTransientFailure("\(provider.rawValue.capitalized) CLI request failed.")
 }
 
 private func parseJSONPayload(from rawOutput: String) -> [String: Any]? {
@@ -376,12 +693,12 @@ private func extractCLIText(from payload: [String: Any]) -> String? {
 
 private func conciseCLIErrorMessage(stderr: String, stdout: String) -> String {
     if let message = conciseCLIErrorMessage(from: stderr) {
-        return message
+        return boundedSnippet(message, maxCharacters: maxCLIErrorSnippetCharacters)
     }
     if let message = conciseCLIErrorMessage(from: stdout) {
-        return message
+        return boundedSnippet(message, maxCharacters: maxCLIErrorSnippetCharacters)
     }
-    return "CLI command failed."
+    return boundedSnippet("CLI command failed.", maxCharacters: maxCLIErrorSnippetCharacters)
 }
 
 private func conciseCLIErrorMessage(from output: String) -> String? {
@@ -498,54 +815,53 @@ private struct CodexCLIProviderClient: ProviderClient {
     let provider: ProviderName = .codex
 
     func requestText(request: ProviderTextRequest, apiKey: String, model: String) async throws -> String {
-        try await withProviderWorkPermit(provider: provider, operationName: "request_text") {
-            let prompt = promptTextForCLI(request)
-            let temporaryDirectory = FileManager.default.temporaryDirectory
-                .appendingPathComponent("contextbrief-codex-\(UUID().uuidString)", isDirectory: true)
-            try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
-            defer {
-                try? FileManager.default.removeItem(at: temporaryDirectory)
-            }
-            let outputPath = temporaryDirectory.appendingPathComponent("last-message.txt")
+        let prompt = try validatedPromptTextForCLI(request, provider: provider)
+        let normalizedModel = try normalizedCLIModel(for: provider, rawModel: model)
+        let binary = resolveCLIBinary(for: provider)
+        return try await withRetriedProviderRequest(provider: provider, model: normalizedModel) { timeoutSeconds in
+            try await withProviderWorkPermit(provider: provider, operationName: "request_text") {
+                let temporaryDirectory = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("contextbrief-codex-\(UUID().uuidString)", isDirectory: true)
+                try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+                defer {
+                    try? FileManager.default.removeItem(at: temporaryDirectory)
+                }
+                let outputPath = temporaryDirectory.appendingPathComponent("last-message.txt")
 
-            var arguments = [
-                "exec",
-                "--skip-git-repo-check",
-                "--json",
-                "--output-last-message", outputPath.path,
-                "--ask-for-approval", "never",
-                "--sandbox", "read-only",
-                "-"
-            ]
-            let normalizedModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !normalizedModel.isEmpty {
-                arguments.insert(contentsOf: ["-m", normalizedModel], at: 1)
-            }
+                var arguments = [
+                    "exec",
+                    "--skip-git-repo-check",
+                    "--json",
+                    "--output-last-message", outputPath.path,
+                    "--ask-for-approval", "never",
+                    "--sandbox", "read-only",
+                    "-"
+                ]
+                if !normalizedModel.isEmpty {
+                    arguments.insert(contentsOf: ["-m", normalizedModel], at: 1)
+                }
 
-            let result = try await runCLICommand(
-                binary: resolveCLIBinary(for: provider),
-                arguments: arguments,
-                input: prompt
-            )
+                let result = try await runCLICommand(
+                    provider: provider,
+                    binary: binary,
+                    arguments: arguments,
+                    input: prompt,
+                    model: normalizedModel.nonEmpty,
+                    timeoutSeconds: timeoutSeconds
+                )
 
-            if
-                let fileText = try? String(contentsOf: outputPath, encoding: .utf8)
-                    .trimmingCharacters(in: .whitespacesAndNewlines),
-                !fileText.isEmpty
-            {
-                return fileText
-            }
+                if let fileText = try? String(contentsOf: outputPath, encoding: .utf8), !fileText.isEmpty {
+                    return try normalizedCLIResponseText(fileText, provider: provider)
+                }
 
-            if
-                let payload = parseJSONPayload(from: result.stdout),
-                let jsonText = extractCLIText(from: payload)
-            {
-                return jsonText
+                if
+                    let payload = parseJSONPayload(from: result.stdout),
+                    let jsonText = extractCLIText(from: payload)
+                {
+                    return try normalizedCLIResponseText(jsonText, provider: provider)
+                }
+                return try normalizedCLIResponseText(result.stdout, provider: provider)
             }
-            guard let fallback = result.stdout.nonEmpty else {
-                throw AppError.providerRequestFailed("Codex CLI returned an empty response.")
-            }
-            return fallback
         }
     }
 }
@@ -554,31 +870,34 @@ private struct ClaudeCLIProviderClient: ProviderClient {
     let provider: ProviderName = .claude
 
     func requestText(request: ProviderTextRequest, apiKey: String, model: String) async throws -> String {
-        try await withProviderWorkPermit(provider: provider, operationName: "request_text") {
-            let prompt = promptTextForCLI(request)
-            var arguments = [
-                "-p", prompt,
-                "--output-format", "json"
-            ]
-            let normalizedModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !normalizedModel.isEmpty {
-                arguments.append(contentsOf: ["--model", normalizedModel])
+        let prompt = try validatedPromptTextForCLI(request, provider: provider)
+        let normalizedModel = try normalizedCLIModel(for: provider, rawModel: model)
+        let binary = resolveCLIBinary(for: provider)
+        return try await withRetriedProviderRequest(provider: provider, model: normalizedModel) { timeoutSeconds in
+            try await withProviderWorkPermit(provider: provider, operationName: "request_text") {
+                var arguments = [
+                    "-p", prompt,
+                    "--output-format", "json"
+                ]
+                if !normalizedModel.isEmpty {
+                    arguments.append(contentsOf: ["--model", normalizedModel])
+                }
+                let result = try await runCLICommand(
+                    provider: provider,
+                    binary: binary,
+                    arguments: arguments,
+                    input: nil,
+                    model: normalizedModel.nonEmpty,
+                    timeoutSeconds: timeoutSeconds
+                )
+                if
+                    let payload = parseJSONPayload(from: result.stdout),
+                    let text = extractCLIText(from: payload)
+                {
+                    return try normalizedCLIResponseText(text, provider: provider)
+                }
+                return try normalizedCLIResponseText(result.stdout, provider: provider)
             }
-            let result = try await runCLICommand(
-                binary: resolveCLIBinary(for: provider),
-                arguments: arguments,
-                input: nil
-            )
-            if
-                let payload = parseJSONPayload(from: result.stdout),
-                let text = extractCLIText(from: payload)
-            {
-                return text
-            }
-            guard let fallback = result.stdout.nonEmpty else {
-                throw AppError.providerRequestFailed("Claude CLI returned an empty response.")
-            }
-            return fallback
         }
     }
 }
@@ -587,14 +906,46 @@ private struct GeminiCLIProviderClient: ProviderClient {
     let provider: ProviderName = .gemini
 
     func requestText(request: ProviderTextRequest, apiKey: String, model: String) async throws -> String {
-        try await withProviderWorkPermit(provider: provider, operationName: "request_text") {
-            let prompt = promptTextForCLI(request)
-            let normalizedModel = normalizedGeminiCLIModel(model)
-            return try await runGeminiCommand(prompt: prompt, model: normalizedModel)
+        let prompt = try validatedPromptTextForCLI(request, provider: provider)
+        let normalizedModel = try normalizedCLIModel(for: provider, rawModel: model)
+        let binary = resolveCLIBinary(for: provider)
+        let candidateModels = geminiFallbackModelCandidates(for: normalizedModel)
+        let retryLabel = normalizedModel.nonEmpty ?? "default"
+        return try await withRetriedProviderRequest(provider: provider, model: retryLabel) { timeoutSeconds in
+            try await withProviderWorkPermit(provider: provider, operationName: "request_text") {
+                var lastError: Error?
+                for candidate in candidateModels {
+                    do {
+                        return try await runGeminiCommand(
+                            prompt: prompt,
+                            model: candidate,
+                            binary: binary,
+                            timeoutSeconds: timeoutSeconds
+                        )
+                    } catch {
+                        lastError = error
+                        guard shouldFallbackGeminiModel(after: error) else {
+                            throw error
+                        }
+                        AppLogger.debug(
+                            "Gemini model fallback [requested=\(retryLabel) fallback=\(candidate)]"
+                        )
+                    }
+                }
+                if let appError = lastError as? AppError {
+                    throw appError
+                }
+                throw AppError.providerRequestRejected("Gemini CLI request failed.")
+            }
         }
     }
 
-    private func runGeminiCommand(prompt: String, model: String) async throws -> String {
+    private func runGeminiCommand(
+        prompt: String,
+        model: String,
+        binary: String,
+        timeoutSeconds: TimeInterval
+    ) async throws -> String {
         var arguments = [
             "--output-format", "json",
             "--prompt", prompt
@@ -603,29 +954,40 @@ private struct GeminiCLIProviderClient: ProviderClient {
             arguments.append(contentsOf: ["--model", model])
         }
         let result = try await runCLICommand(
-            binary: resolveCLIBinary(for: provider),
+            provider: provider,
+            binary: binary,
             arguments: arguments,
-            input: nil
+            input: nil,
+            model: model.nonEmpty,
+            timeoutSeconds: timeoutSeconds,
+            environmentOverrides: resolvedGeminiEnvironmentOverrides()
         )
         if
             let payload = parseJSONPayload(from: result.stdout),
             let text = extractCLIText(from: payload)
         {
-            return text
+            return try normalizedCLIResponseText(text, provider: provider)
         }
-        guard let fallback = result.stdout.nonEmpty else {
-            throw AppError.providerRequestFailed("Gemini CLI returned an empty response.")
-        }
-        return fallback
+        return try normalizedCLIResponseText(result.stdout, provider: provider)
     }
 }
 
-private func normalizedGeminiCLIModel(_ model: String) -> String {
-    let normalizedModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
-    switch normalizedModel {
-    case "gemini-flash-latest":
-        return "gemini-2.5-flash"
-    default:
-        return normalizedModel
+private func shouldFallbackGeminiModel(after error: Error) -> Bool {
+    guard let appError = error as? AppError else {
+        return false
     }
+    switch appError {
+    case .providerModelUnavailable(let provider, _, _):
+        return provider == .gemini
+    default:
+        return false
+    }
+}
+
+private func resolvedGeminiEnvironmentOverrides() -> [String: String] {
+    let environment = ProcessInfo.processInfo.environment
+    guard environment["GEMINI_CLI_NO_RELAUNCH"]?.nonEmpty == nil else {
+        return [:]
+    }
+    return ["GEMINI_CLI_NO_RELAUNCH": "true"]
 }

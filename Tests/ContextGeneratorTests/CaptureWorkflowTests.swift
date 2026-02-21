@@ -15,7 +15,7 @@ private final class FlakyDensifier: Densifying {
         XCTAssertEqual(provider, .codex)
         calls += 1
         if calls == 1 {
-            throw AppError.providerRequestFailed("temporary provider error")
+            throw AppError.providerRequestTransientFailure("temporary provider error")
         }
         return "dense-after-retry"
     }
@@ -24,7 +24,17 @@ private final class FlakyDensifier: Densifying {
 private final class AlwaysFailingDensifier: Densifying {
     func densify(snapshot: CapturedSnapshot, provider: ProviderName, model: String, apiKey: String) async throws -> String {
         XCTAssertEqual(provider, .codex)
-        throw AppError.providerRequestFailed("provider unavailable")
+        throw AppError.providerRequestTransientFailure("provider unavailable")
+    }
+}
+
+private final class NonRetryableFailureDensifier: Densifying {
+    private(set) var calls = 0
+
+    func densify(snapshot: CapturedSnapshot, provider: ProviderName, model: String, apiKey: String) async throws -> String {
+        XCTAssertEqual(provider, .codex)
+        calls += 1
+        throw AppError.providerRequestRejected("model does not support this request")
     }
 }
 
@@ -132,6 +142,37 @@ final class CaptureWorkflowTests: XCTestCase {
         XCTAssertEqual(result.snapshot.retryCount, 1)
         XCTAssertEqual(result.snapshot.denseContent, "")
         XCTAssertEqual(result.snapshot.failureMessage, "provider unavailable")
+    }
+
+    func testWorkflowDoesNotRetryNonRetryableProviderFailure() async throws {
+        let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let repo = ContextRepository(rootURL: tempRoot)
+        let manager = ContextSessionManager(repository: repo)
+        let keychain = MockKeychain()
+        let densifier = NonRetryableFailureDensifier()
+        let workflow = CaptureWorkflow(
+            sessionManager: manager,
+            repository: repo,
+            densificationService: densifier,
+            keychain: keychain
+        )
+
+        var state = try repo.appState()
+        state.onboardingCompleted = true
+        state.selectedProvider = .codex
+        state.selectedModel = "demo-model"
+        try repo.saveAppState(state)
+        _ = try manager.createNewContext(title: "Current")
+
+        let result = try await workflow.runCapture(
+            capturedSnapshot: makeCapturedSnapshot(),
+            screenshotData: nil
+        )
+
+        XCTAssertEqual(densifier.calls, 1)
+        XCTAssertEqual(result.snapshot.status, .failed)
+        XCTAssertEqual(result.snapshot.retryCount, 0)
+        XCTAssertEqual(result.snapshot.failureMessage, "model does not support this request")
     }
 
     private func makeCapturedSnapshot() -> CapturedSnapshot {

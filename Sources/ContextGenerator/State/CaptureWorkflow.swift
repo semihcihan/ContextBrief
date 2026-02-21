@@ -135,12 +135,7 @@ public final class CaptureWorkflow {
         guard let appError = error as? AppError else {
             return false
         }
-        switch appError {
-        case .providerRequestFailed:
-            return true
-        default:
-            return false
-        }
+        return appError.isRetryableProviderFailure
     }
 
     private func errorMessage(from error: Error) -> String {
