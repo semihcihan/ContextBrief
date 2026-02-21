@@ -14,9 +14,9 @@ private final class RecordingProviderClient: ProviderClient {
         nextResponse
     }
 
-    func densify(request: DensificationRequest, apiKey: String, model: String) async throws -> String {
+    func requestDensification(request: DensificationRequest, apiKey: String, model: String) async throws -> DensificationResult {
         densificationRequests.append(request)
-        return nextResponse
+        return DensificationResult(content: nextResponse, title: nil)
     }
 }
 
@@ -85,14 +85,15 @@ final class DensificationServiceTests: XCTestCase {
             filteredCombinedText: "filtered content"
         )
 
-        let output = try await service.densify(
+        let result = try await service.densify(
             snapshot: snapshot,
             provider: .codex,
             model: "test-model",
             apiKey: "key"
         )
 
-        XCTAssertEqual(output, "filtered content")
+        XCTAssertEqual(result.content, "filtered content")
+        XCTAssertNil(result.title)
     }
 
     private func makeSnapshot(combinedText: String, filteredCombinedText: String?) -> CapturedSnapshot {

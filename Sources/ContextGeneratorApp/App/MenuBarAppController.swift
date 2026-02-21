@@ -818,14 +818,19 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
             return
         }
 
-        let snapshotTitle = await namingService.suggestSnapshotTitle(
-            capturedSnapshot: result.capturedSnapshot,
-            denseContent: result.snapshot.denseContent,
-            provider: config.provider,
-            model: config.model,
-            apiKey: config.apiKey,
-            fallback: result.snapshot.title
-        )
+        let snapshotTitle: String
+        if let fromDensification = result.suggestedSnapshotTitle, !fromDensification.isEmpty {
+            snapshotTitle = String(fromDensification.prefix(80))
+        } else {
+            snapshotTitle = await namingService.suggestSnapshotTitle(
+                capturedSnapshot: result.capturedSnapshot,
+                denseContent: result.snapshot.denseContent,
+                provider: config.provider,
+                model: config.model,
+                apiKey: config.apiKey,
+                fallback: result.snapshot.title
+            )
+        }
 
         do {
             let snapshot = try sessionManager.renameSnapshot(result.snapshot.id, title: snapshotTitle)

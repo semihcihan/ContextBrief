@@ -14,3 +14,6 @@ DerivedData/
 *.xcuserstate
 
 .cursor/plans/
+
+# App log file
+.logs.txt
