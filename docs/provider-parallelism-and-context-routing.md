@@ -18,7 +18,6 @@
 - Each provider has a single max parallel work limit.
 - This limit applies to all provider calls, regardless of source:
   - snapshot densification
-  - chunk/merge runs within densification
   - snapshot title generation
   - context title generation
   - setup/health-check model calls
@@ -48,7 +47,7 @@
 
 ## Non-goals
 - Do not move already persisted snapshots across contexts automatically.
-- Do not tie provider parallel limits to feature type (chunk/title/densify); limits are provider-wide.
+- Do not tie provider parallel limits to feature type (densify/title/setup); limits are provider-wide.
 
 ## Configuration model
 
@@ -86,9 +85,8 @@
 3. Apply provider limiter to all provider request boundaries.
    - Wrap outbound model execution paths (HTTP and Apple respond call).
    - Ensure densification, title generation, and setup validation all pass through the limiter.
-4. Align chunk/merge scheduling to same provider limits.
-   - Keep task-group orchestration.
-   - Derive local enqueue parallelism from the effective provider limit.
+4. Keep densification execution under the same provider-wide limit.
+   - Densification remains a single provider request per snapshot.
 5. Remove old concurrency controls.
    - Remove hardcoded densification parallel constants (`6`/`3`).
    - Remove Apple-only `serializeProviderCalls` behavior.
