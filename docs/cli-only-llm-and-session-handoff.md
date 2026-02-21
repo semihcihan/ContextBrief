@@ -122,6 +122,27 @@ Proposed shape:
 - Include key context (`cli`, `exit code`, `stderr summary`) in logs.
 - Preserve retry behavior for transient request/process failures where appropriate.
 
+### Implemented guardrails (UI app adaptation)
+
+The app now includes these reliability guardrails in the provider layer:
+
+- Model handling:
+  - Bare model ids only (e.g. `gpt-5`, `sonnet`, `gemini-2.5-flash`, `gemini-flash-latest`). No `provider/model` or `cli/provider/model` forms.
+  - Input is trimmed of leading/trailing whitespace and passed through to the CLI as-is.
+- Retry policy tuned for UI:
+  - Retries only retryable failures (timeouts/transient transport/rate-limit style failures).
+  - No retries for deterministic failures (invalid args, missing binary, auth/model access issues).
+  - Uses jittered backoff with an overall request deadline to avoid long UI stalls.
+- Typed provider errors:
+  - Distinguishes timeout, binary missing, authentication failure, model unavailable, and generic rejected requests.
+  - Provides clearer UX copy and analytics codes from structured app errors.
+- Gemini unstable-model fallback:
+  - For unstable IDs (`preview`/`exp`/`gemini-3*`), tries safer fallback candidates before failing.
+  - Returns suggested alternatives on model-unavailable failures.
+- Safety bounds:
+  - Enforces max prompt size before launching a CLI process.
+  - Bounds error snippets and response size to keep logs/UI stable.
+
 ## Product behavior (v1 for this direction)
 
 ### Densification

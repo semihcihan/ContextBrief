@@ -11,7 +11,7 @@ private final class RetrySuccessDensifier: Densifying {
 private final class RetryFailureDensifier: Densifying {
     func densify(snapshot: CapturedSnapshot, provider: ProviderName, model: String, apiKey: String) async throws -> String {
         XCTAssertEqual(provider, .codex)
-        throw AppError.providerRequestFailed("manual retry failed")
+        throw AppError.providerRequestTransientFailure("manual retry failed")
     }
 }
 

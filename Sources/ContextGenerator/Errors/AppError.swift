@@ -10,7 +10,12 @@ public enum AppError: LocalizedError {
     case snapshotNotFound
     case keyNotConfigured
     case providerNotConfigured
-    case providerRequestFailed(String)
+    case providerRequestTransientFailure(String)
+    case providerRequestTimedOut(provider: ProviderName, timeoutSeconds: Int)
+    case providerBinaryNotFound(provider: ProviderName, binary: String)
+    case providerAuthenticationFailed(provider: ProviderName, details: String?)
+    case providerModelUnavailable(provider: ProviderName, model: String, suggestions: [String])
+    case providerRequestRejected(String)
     case densificationInputTooLong(estimatedTokens: Int, limit: Int)
 
     public var errorDescription: String? {
@@ -33,10 +38,35 @@ public enum AppError: LocalizedError {
             return "Required credentials are missing. Configure setup settings."
         case .providerNotConfigured:
             return "LLM CLI tool is not configured. Complete setup."
-        case .providerRequestFailed(let details):
+        case .providerRequestTransientFailure(let details):
+            return details
+        case .providerRequestTimedOut(let provider, let timeoutSeconds):
+            return "\(provider.rawValue.capitalized) CLI request timed out after \(timeoutSeconds) seconds."
+        case .providerBinaryNotFound(let provider, let binary):
+            return "\(provider.rawValue.capitalized) CLI binary was not found (\(binary)). Install it or set the corresponding *_PATH environment variable."
+        case .providerAuthenticationFailed(let provider, let details):
+            if let details, !details.isEmpty {
+                return "Authentication failed for \(provider.rawValue.capitalized) CLI: \(details)"
+            }
+            return "Authentication failed for \(provider.rawValue.capitalized) CLI. Re-authenticate and try again."
+        case .providerModelUnavailable(let provider, let model, let suggestions):
+            if suggestions.isEmpty {
+                return "Model \(model) is not available for \(provider.rawValue.capitalized) CLI."
+            }
+            return "Model \(model) is not available for \(provider.rawValue.capitalized) CLI. Try: \(suggestions.joined(separator: ", "))"
+        case .providerRequestRejected(let details):
             return details
         case .densificationInputTooLong(let estimated, let limit):
             return "Capture is too long to densify (about \(estimated) tokens; limit is \(limit)). Try a shorter selection or fewer pages."
+        }
+    }
+
+    public var isRetryableProviderFailure: Bool {
+        switch self {
+        case .providerRequestTransientFailure, .providerRequestTimedOut:
+            return true
+        default:
+            return false
         }
     }
 }

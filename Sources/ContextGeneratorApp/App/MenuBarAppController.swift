@@ -1036,8 +1036,18 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
             return "key_not_configured"
         case .providerNotConfigured:
             return "provider_not_configured"
-        case .providerRequestFailed:
-            return "provider_request_failed"
+        case .providerRequestTransientFailure:
+            return "provider_request_transient_failure"
+        case .providerRequestTimedOut:
+            return "provider_request_timed_out"
+        case .providerBinaryNotFound:
+            return "provider_binary_not_found"
+        case .providerAuthenticationFailed:
+            return "provider_authentication_failed"
+        case .providerModelUnavailable:
+            return "provider_model_unavailable"
+        case .providerRequestRejected:
+            return "provider_request_rejected"
         case .densificationInputTooLong:
             return "densification_input_too_long"
         }
@@ -1223,8 +1233,15 @@ extension MenuBarAppController: SnapshotProcessingCoordinatorDelegate {
             reportUnexpectedNonFatal(error, context: "capture_workflow")
             if let appError = error as? AppError {
                 switch appError {
-                case .providerRequestFailed(let details):
+                case .providerRequestTransientFailure(let details):
                     updateFeedback("Model request failed: \(details)")
+                case .providerRequestRejected(let details):
+                    updateFeedback("Model request failed: \(details)")
+                case .providerRequestTimedOut,
+                     .providerBinaryNotFound,
+                     .providerAuthenticationFailed,
+                     .providerModelUnavailable:
+                    updateFeedback("Model request failed: \(appError.localizedDescription)")
                 default:
                     updateFeedback("Snapshot failed: \(appError.localizedDescription)")
                 }
