@@ -532,9 +532,9 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
     private func defaultModel(for provider: ProviderName) -> String {
         switch provider {
         case .codex:
-            return "gpt-5-codex"
+            return "gpt-5-nano"
         case .claude:
-            return "claude-sonnet-4-5"
+            return "claude-haiku-4-5"
         case .gemini:
             return "gemini-2.5-flash"
         }

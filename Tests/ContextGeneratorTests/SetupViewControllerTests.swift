@@ -52,14 +52,14 @@ final class SetupViewControllerTests: XCTestCase {
         controller.testingSelectProvider(.claude)
 
         XCTAssertEqual(controller.testingSelectedProvider(), .claude)
-        XCTAssertEqual(controller.testingModelValue(), "claude-sonnet-4-5")
+        XCTAssertEqual(controller.testingModelValue(), "claude-haiku-4-5")
         XCTAssertEqual(controller.testingInfoLabelValue(), "Claude Code selected. Model is optional.")
         XCTAssertFalse(controller.testingAPIKeyRowVisible())
     }
 
     func testCompletedSetupLoadsWithNeutralInfoAndDisabledSaveChanges() throws {
         let (appStateService, _) = try makeAppStateService()
-        try appStateService.configureProvider(provider: .codex, model: "gpt-5-codex", apiKey: nil)
+        try appStateService.configureProvider(provider: .codex, model: "gpt-5-nano", apiKey: nil)
         try appStateService.markOnboardingCompleted()
 
         let controller = makeController(
@@ -76,7 +76,7 @@ final class SetupViewControllerTests: XCTestCase {
 
     func testCompletedSetupEnablesSaveChangesWhenModelChanges() throws {
         let (appStateService, _) = try makeAppStateService()
-        try appStateService.configureProvider(provider: .codex, model: "gpt-5-codex", apiKey: nil)
+        try appStateService.configureProvider(provider: .codex, model: "gpt-5-nano", apiKey: nil)
         try appStateService.markOnboardingCompleted()
 
         let controller = makeController(
