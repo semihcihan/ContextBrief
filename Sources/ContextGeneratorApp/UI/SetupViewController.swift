@@ -359,12 +359,11 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
 
     private func validateProvider(provider: ProviderName, model: String) async throws {
         let client = ProviderClientFactory.make(provider: provider)
-        let request = DensificationRequest(
-            inputText: "Health check. Reply with OK.",
-            appName: "Context Brief",
-            windowTitle: "Setup Validation"
+        let request = ProviderTextRequest(
+            systemInstruction: nil,
+            prompt: "Health check. Reply with OK only."
         )
-        _ = try await client.densify(
+        _ = try await client.requestText(
             request: request,
             model: model
         )

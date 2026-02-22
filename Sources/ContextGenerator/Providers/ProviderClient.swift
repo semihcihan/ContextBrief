@@ -184,6 +184,26 @@ private struct CLICommandResult {
     let stderr: String
 }
 
+private func logCLIResponse(
+    provider: ProviderName,
+    binary: String,
+    exitStatus: Int32,
+    timedOut: Bool,
+    stdout: String,
+    stderr: String
+) {
+    let statusLabel = timedOut ? "timeout" : "exit \(exitStatus)"
+    let headline = "CLI response provider=\(provider.rawValue) binary=\(binary) \(statusLabel)"
+    let body = [
+        "stdout (\(stdout.count) chars):",
+        stdout.isEmpty ? "(empty)" : stdout,
+        "",
+        "stderr (\(stderr.count) chars):",
+        stderr.isEmpty ? "(empty)" : stderr
+    ].joined(separator: "\n")
+    AppLogger.filePrintMultiline(level: "DEBUG", headline: headline, body: body)
+}
+
 private final class CLICommandExecutionState: @unchecked Sendable {
     private let lock = NSLock()
     private var timeoutTriggered = false
@@ -398,8 +418,18 @@ private func runCLICommand(
             let stderr = String(data: stderrData, encoding: .utf8) ?? ""
             let stderrTrimmed = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
             let stdoutTrimmed = stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+            let timedOut = executionState.didTimeout()
 
-            if executionState.didTimeout() {
+            logCLIResponse(
+                provider: provider,
+                binary: binary,
+                exitStatus: terminatedProcess.terminationStatus,
+                timedOut: timedOut,
+                stdout: stdout,
+                stderr: stderr
+            )
+
+            if timedOut {
                 resumeOnce(
                     .failure(
                         AppError.providerRequestTimedOut(
@@ -432,6 +462,11 @@ private func runCLICommand(
         do {
             try process.run()
         } catch {
+            AppLogger.filePrintMultiline(
+                level: "DEBUG",
+                headline: "CLI response provider=\(provider.rawValue) binary=\(binary) failed to start",
+                body: "error: \(error.localizedDescription)"
+            )
             resumeOnce(
                 .failure(classifyCLIStartupFailure(provider: provider, binary: binary, error: error))
             )
@@ -731,6 +766,11 @@ private func conciseCLIErrorMessage(from output: String) -> String? {
         .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
         .filter { !$0.isEmpty }
     for line in lines {
+        if let message = extractMessageFromErrorPrefixedLine(line) {
+            return message
+        }
+    }
+    for line in lines {
         if let normalized = normalizedCLIErrorLine(line) {
             return normalized
         }
@@ -742,6 +782,19 @@ private func conciseCLIErrorMessage(from output: String) -> String? {
         return line
     }
     return nil
+}
+
+private func extractMessageFromErrorPrefixedLine(_ line: String) -> String? {
+    let lower = line.lowercased()
+    let prefix = lower.hasPrefix("error: ") ? "error: " : (lower.hasPrefix("error:") ? "error:" : nil)
+    guard let prefix else { return nil }
+    let rest = String(line.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+    guard rest.first == "{", let data = rest.data(using: .utf8),
+          let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let message = extractCLIErrorMessage(from: payload) else {
+        return nil
+    }
+    return message
 }
 
 private func extractCLIErrorMessage(from payload: [String: Any]) -> String? {
@@ -757,6 +810,9 @@ private func extractCLIErrorMessage(from payload: [String: Any]) -> String? {
         type.lowercased() != "error"
     {
         return type
+    }
+    if let message = normalizedCLIErrorText(payload["detail"] as? String) {
+        return message
     }
     if let message = normalizedCLIErrorText(payload["message"] as? String) {
         return message
@@ -937,9 +993,8 @@ private struct CodexCLIProviderClient: ProviderClient {
                 var arguments = [
                     "exec",
                     "--skip-git-repo-check",
-                    "--json",
                     "--output-last-message", outputPath.path,
-                    "--ask-for-approval", "never",
+                    "-c", "ask_for_approval=never",
                     "--sandbox", "read-only",
                     "-"
                 ]
@@ -996,7 +1051,7 @@ private struct CodexCLIProviderClient: ProviderClient {
                     "--json",
                     "--output-schema", schemaPath.path,
                     "--output-last-message", outputPath.path,
-                    "--ask-for-approval", "never",
+                    "-c", "ask_for_approval=never",
                     "--sandbox", "read-only",
                     "-"
                 ]
