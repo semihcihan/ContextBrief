@@ -43,7 +43,11 @@
 ## Non-goals
 
 - Do not require Gemini to support JSON schema; prompt-based request for `title` and best-effort parsing are sufficient, with NamingService as fallback.
-- Context title generation (refresh cadence, threshold) is unchanged; only snapshot title is taken from densification or NamingService.
+
+## Context title from first snapshot
+
+- When the first snapshot is added to a context (capture or promote), the context title is set to that snapshot’s title (from densification or NamingService).
+- The context title is refreshed every N successful snapshots (see provider-parallelism-and-context-routing.md; e.g. every 3 turns) via NamingService; the first snapshot sets the initial title, then it is updated on the configured cadence.
 
 ## Implementation notes
 

@@ -427,7 +427,11 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
         do {
             let context = try sessionManager.promoteLastCaptureToNewContext()
             eventTracker.track(.promoteSucceeded, parameters: ["context_id": context.id.uuidString])
-            AppLogger.debug("promoteLastCapture success newContextId=\(context.id.uuidString) title=\(context.title)")
+            if let snapshots = try? repository.snapshots(in: context.id), snapshots.count == 1, let first = snapshots.first {
+                _ = try? sessionManager.renameContext(context.id, title: first.title)
+            }
+            let titleToLog = (try? repository.context(id: context.id))?.title ?? context.title
+            AppLogger.debug("promoteLastCapture success newContextId=\(context.id.uuidString) title=\(titleToLog)")
             updateFeedback("Moved last snapshot to new context")
             refreshMenuState()
             Task { @MainActor [weak self] in
@@ -830,6 +834,9 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
         do {
             let snapshot = try sessionManager.renameSnapshot(result.snapshot.id, title: snapshotTitle)
             AppLogger.debug("applyGeneratedNames snapshot title updated snapshotId=\(snapshot.id.uuidString) title=\(snapshot.title)")
+            if let snapshots = try? repository.snapshots(in: result.context.id), snapshots.count == 1 {
+                _ = try? sessionManager.renameContext(result.context.id, title: snapshotTitle)
+            }
         } catch {}
 
         enqueueContextTitleRefreshIfNeeded(contextId: result.context.id, provider: config.provider)
