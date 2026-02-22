@@ -86,13 +86,20 @@ The project at `/Users/semihcihan/Downloads/summarize-main/src/llm` has producti
 - Parse JSONL for usage/cost when needed.
 - Read `<file>` as primary result; use stdout fallback if file is empty.
 
-### 5) Structured-output fallback strategy
+### 5) Claude CLI error payload (is_error + result)
+
+- Claude Code CLI may exit with code 1 and still write JSON to stdout with `"is_error": true` and `"result": "<message>"` (e.g. `"Credit balance is too low"`).
+- We parse that payload when building the CLI error details so the user sees the API message instead of a generic failure.
+- We also treat a successful exit with `is_error: true` in the JSON as a failure and throw with the `result` message.
+- Messages like "Credit balance is too low" indicate an account/billing issue: the user must add credits in their Claude Code / Anthropic account.
+
+### 6) Structured-output fallback strategy
 
 - For CLIs that emit JSON, parse JSON payloads and extract canonical text fields.
 - If JSON parsing fails, fallback to trimmed stdout.
 - Treat empty outputs as hard failures.
 
-### 6) Optional cwd
+### 7) Optional cwd
 
 - Keep `cwd` optional in adapter options.
 - Use neutral cwd by default for pure text tasks.
