@@ -13,6 +13,9 @@ final class UpdateChecker {
     private init() {}
 
     func checkForUpdates(silent: Bool = false) {
+#if DEBUG
+        return
+#endif
         guard let url = URL(string: "https://api.github.com/repos/\(repoOwner)/\(repoName)/releases/latest") else {
             return
         }
