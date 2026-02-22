@@ -3,16 +3,13 @@ import Foundation
 public final class SnapshotRetryWorkflow {
     private let repository: ContextRepositorying
     private let densificationService: Densifying
-    private let keychain: KeychainServicing
 
     public init(
         repository: ContextRepositorying,
-        densificationService: Densifying,
-        keychain: KeychainServicing
+        densificationService: Densifying
     ) {
         self.repository = repository
         self.densificationService = densificationService
-        self.keychain = keychain
     }
 
     @discardableResult
@@ -34,7 +31,6 @@ public final class SnapshotRetryWorkflow {
             throw AppError.providerNotConfigured
         }
         let model = snapshot.model ?? ""
-        let apiKey = try keychain.get("api.\(provider.rawValue)") ?? ""
 
         let nextRetryCount = snapshot.retryCount + 1
         let attemptedAt = Date()
@@ -64,8 +60,7 @@ public final class SnapshotRetryWorkflow {
             let (dense, _) = try await densificationService.densify(
                 snapshot: capturedSnapshot,
                 provider: provider,
-                model: model,
-                apiKey: apiKey
+                model: model
             )
             let updated = makeUpdatedSnapshot(
                 from: snapshot,

@@ -4,8 +4,7 @@ public protocol Densifying {
     func densify(
         snapshot: CapturedSnapshot,
         provider: ProviderName,
-        model: String,
-        apiKey: String
+        model: String
     ) async throws -> (content: String, title: String?)
 }
 
@@ -29,8 +28,7 @@ public final class DensificationService: Densifying {
     public func densify(
         snapshot: CapturedSnapshot,
         provider: ProviderName,
-        model: String,
-        apiKey: String
+        model: String
     ) async throws -> (content: String, title: String?) {
         let inputText: String
         if
@@ -53,7 +51,6 @@ public final class DensificationService: Densifying {
         )
         let result = try await client.densify(
             request: request,
-            apiKey: apiKey,
             model: model
         )
         let content = result.content.isEmpty ? inputText : result.content

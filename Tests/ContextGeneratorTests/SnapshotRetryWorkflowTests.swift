@@ -2,32 +2,16 @@ import ContextGenerator
 import XCTest
 
 private final class RetrySuccessDensifier: Densifying {
-    func densify(snapshot: CapturedSnapshot, provider: ProviderName, model: String, apiKey: String) async throws -> (content: String, title: String?) {
+    func densify(snapshot: CapturedSnapshot, provider: ProviderName, model: String) async throws -> (content: String, title: String?) {
         XCTAssertEqual(provider, .codex)
         return ("dense-after-manual-retry", nil)
     }
 }
 
 private final class RetryFailureDensifier: Densifying {
-    func densify(snapshot: CapturedSnapshot, provider: ProviderName, model: String, apiKey: String) async throws -> (content: String, title: String?) {
+    func densify(snapshot: CapturedSnapshot, provider: ProviderName, model: String) async throws -> (content: String, title: String?) {
         XCTAssertEqual(provider, .codex)
         throw AppError.providerRequestTransientFailure("manual retry failed")
-    }
-}
-
-private final class RetryMockKeychain: KeychainServicing {
-    private var values: [String: String] = [:]
-
-    func set(_ value: String, for key: String) throws {
-        values[key] = value
-    }
-
-    func get(_ key: String) throws -> String? {
-        values[key]
-    }
-
-    func delete(_ key: String) throws {
-        values.removeValue(forKey: key)
     }
 }
 
@@ -36,7 +20,6 @@ final class SnapshotRetryWorkflowTests: XCTestCase {
         let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let repo = ContextRepository(rootURL: tempRoot)
         let manager = ContextSessionManager(repository: repo)
-        let keychain = RetryMockKeychain()
 
         _ = try manager.createNewContext(title: "Current")
         let failed = try manager.appendSnapshot(
@@ -67,8 +50,7 @@ final class SnapshotRetryWorkflowTests: XCTestCase {
 
         let workflow = SnapshotRetryWorkflow(
             repository: repo,
-            densificationService: RetrySuccessDensifier(),
-            keychain: keychain
+            densificationService: RetrySuccessDensifier()
         )
 
         let retried = try await workflow.retryFailedSnapshot(failed.id)
@@ -84,7 +66,6 @@ final class SnapshotRetryWorkflowTests: XCTestCase {
         let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let repo = ContextRepository(rootURL: tempRoot)
         let manager = ContextSessionManager(repository: repo)
-        let keychain = RetryMockKeychain()
 
         _ = try manager.createNewContext(title: "Current")
         let failed = try manager.appendSnapshot(
@@ -115,8 +96,7 @@ final class SnapshotRetryWorkflowTests: XCTestCase {
 
         let workflow = SnapshotRetryWorkflow(
             repository: repo,
-            densificationService: RetryFailureDensifier(),
-            keychain: keychain
+            densificationService: RetryFailureDensifier()
         )
 
         do {

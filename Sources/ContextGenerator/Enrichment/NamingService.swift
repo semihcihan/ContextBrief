@@ -15,7 +15,6 @@ public final class NamingService {
         denseContent: String,
         provider: ProviderName,
         model: String,
-        apiKey: String,
         fallback: String
     ) async -> String {
         let prompt = [
@@ -31,7 +30,6 @@ public final class NamingService {
         let raw = await requestText(
             provider: provider,
             model: model,
-            apiKey: apiKey,
             systemInstruction: "You generate concise names for saved work context.",
             prompt: prompt
         )
@@ -45,7 +43,6 @@ public final class NamingService {
         snapshots: [Snapshot],
         provider: ProviderName,
         model: String,
-        apiKey: String,
         fallback: String
     ) async -> String {
         let joined = snapshots.suffix(4).map { snapshot in
@@ -63,7 +60,6 @@ public final class NamingService {
         let raw = await requestText(
             provider: provider,
             model: model,
-            apiKey: apiKey,
             systemInstruction: "You generate concise names for saved work context.",
             prompt: prompt
         )
@@ -89,7 +85,6 @@ public final class NamingService {
     private func requestText(
         provider: ProviderName,
         model: String,
-        apiKey: String,
         systemInstruction: String? = nil,
         prompt: String
     ) async -> String? {
@@ -101,7 +96,6 @@ public final class NamingService {
             let client = ProviderClientFactory.make(provider: provider, session: session)
             return try await client.requestText(
                 request: ProviderTextRequest(systemInstruction: systemInstruction, prompt: prompt),
-                apiKey: apiKey,
                 model: model
             )
         } catch {

@@ -2,7 +2,7 @@ import ContextGenerator
 import XCTest
 
 private final class MockDensifier: Densifying {
-    func densify(snapshot: CapturedSnapshot, provider: ProviderName, model: String, apiKey: String) async throws -> (content: String, title: String?) {
+    func densify(snapshot: CapturedSnapshot, provider: ProviderName, model: String) async throws -> (content: String, title: String?) {
         XCTAssertEqual(provider, .codex)
         return ("dense-output", nil)
     }
@@ -11,7 +11,7 @@ private final class MockDensifier: Densifying {
 private final class FlakyDensifier: Densifying {
     private(set) var calls = 0
 
-    func densify(snapshot: CapturedSnapshot, provider: ProviderName, model: String, apiKey: String) async throws -> (content: String, title: String?) {
+    func densify(snapshot: CapturedSnapshot, provider: ProviderName, model: String) async throws -> (content: String, title: String?) {
         XCTAssertEqual(provider, .codex)
         calls += 1
         if calls == 1 {
@@ -22,7 +22,7 @@ private final class FlakyDensifier: Densifying {
 }
 
 private final class AlwaysFailingDensifier: Densifying {
-    func densify(snapshot: CapturedSnapshot, provider: ProviderName, model: String, apiKey: String) async throws -> (content: String, title: String?) {
+    func densify(snapshot: CapturedSnapshot, provider: ProviderName, model: String) async throws -> (content: String, title: String?) {
         XCTAssertEqual(provider, .codex)
         throw AppError.providerRequestTransientFailure("provider unavailable")
     }
@@ -31,25 +31,10 @@ private final class AlwaysFailingDensifier: Densifying {
 private final class NonRetryableFailureDensifier: Densifying {
     private(set) var calls = 0
 
-    func densify(snapshot: CapturedSnapshot, provider: ProviderName, model: String, apiKey: String) async throws -> (content: String, title: String?) {
+    func densify(snapshot: CapturedSnapshot, provider: ProviderName, model: String) async throws -> (content: String, title: String?) {
         XCTAssertEqual(provider, .codex)
         calls += 1
         throw AppError.providerRequestRejected("model does not support this request")
-    }
-}
-
-private final class MockKeychain: KeychainServicing {
-    private var map: [String: String] = [:]
-    func set(_ value: String, for key: String) throws {
-        map[key] = value
-    }
-
-    func get(_ key: String) throws -> String? {
-        map[key]
-    }
-
-    func delete(_ key: String) throws {
-        map.removeValue(forKey: key)
     }
 }
 
@@ -58,12 +43,10 @@ final class CaptureWorkflowTests: XCTestCase {
         let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let repo = ContextRepository(rootURL: tempRoot)
         let manager = ContextSessionManager(repository: repo)
-        let keychain = MockKeychain()
         let workflow = CaptureWorkflow(
             sessionManager: manager,
             repository: repo,
-            densificationService: MockDensifier(),
-            keychain: keychain
+            densificationService: MockDensifier()
         )
 
         var state = try repo.appState()
@@ -85,13 +68,11 @@ final class CaptureWorkflowTests: XCTestCase {
         let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let repo = ContextRepository(rootURL: tempRoot)
         let manager = ContextSessionManager(repository: repo)
-        let keychain = MockKeychain()
         let densifier = FlakyDensifier()
         let workflow = CaptureWorkflow(
             sessionManager: manager,
             repository: repo,
-            densificationService: densifier,
-            keychain: keychain
+            densificationService: densifier
         )
 
         var state = try repo.appState()
@@ -116,12 +97,10 @@ final class CaptureWorkflowTests: XCTestCase {
         let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let repo = ContextRepository(rootURL: tempRoot)
         let manager = ContextSessionManager(repository: repo)
-        let keychain = MockKeychain()
         let workflow = CaptureWorkflow(
             sessionManager: manager,
             repository: repo,
-            densificationService: AlwaysFailingDensifier(),
-            keychain: keychain
+            densificationService: AlwaysFailingDensifier()
         )
 
         var state = try repo.appState()
@@ -148,13 +127,11 @@ final class CaptureWorkflowTests: XCTestCase {
         let tempRoot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let repo = ContextRepository(rootURL: tempRoot)
         let manager = ContextSessionManager(repository: repo)
-        let keychain = MockKeychain()
         let densifier = NonRetryableFailureDensifier()
         let workflow = CaptureWorkflow(
             sessionManager: manager,
             repository: repo,
-            densificationService: densifier,
-            keychain: keychain
+            densificationService: densifier
         )
 
         var state = try repo.appState()

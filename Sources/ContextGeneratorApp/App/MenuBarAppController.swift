@@ -9,20 +9,18 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
     private let repository = ContextRepository()
     private lazy var sessionManager = ContextSessionManager(repository: repository)
     private let captureService = ContextCaptureService()
-    private let keychain = KeychainService()
-    private lazy var appStateService = AppStateService(repository: repository, keychain: keychain)
+    private let modelStorage = UserDefaultsProviderModelStorage()
+    private lazy var appStateService = AppStateService(repository: repository, modelStorage: modelStorage)
     private lazy var densificationService = DensificationService()
     private lazy var namingService = NamingService()
     private lazy var snapshotRetryWorkflow = SnapshotRetryWorkflow(
         repository: repository,
-        densificationService: densificationService,
-        keychain: keychain
+        densificationService: densificationService
     )
     private lazy var workflow = CaptureWorkflow(
         sessionManager: sessionManager,
         repository: repository,
-        densificationService: densificationService,
-        keychain: keychain
+        densificationService: densificationService
     )
     private lazy var snapshotProcessingCoordinator = SnapshotProcessingCoordinator(
         captureService: captureService,
@@ -787,7 +785,6 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
     private struct ModelConfig {
         let provider: ProviderName
         let model: String
-        let apiKey: String
     }
 
     private func configuredModelConfig(forTitleGeneration: Bool = false) throws -> ModelConfig? {
@@ -804,11 +801,10 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
             ? developmentConfig.providerForTitleGeneration(selectedProvider: selectedProvider)
             : developmentConfig.providerForDensification(selectedProvider: selectedProvider)
         let model = state.selectedModel ?? ""
-        let apiKey = try keychain.get("api.\(provider.rawValue)") ?? ""
         AppLogger.debug(
             "configuredModelConfig available selectedCLI=\(selectedProvider.rawValue) effectiveProvider=\(provider.rawValue) model=\(model)"
         )
-        return ModelConfig(provider: provider, model: model, apiKey: apiKey)
+        return ModelConfig(provider: provider, model: model)
     }
 
     @MainActor
@@ -827,7 +823,6 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
                 denseContent: result.snapshot.denseContent,
                 provider: config.provider,
                 model: config.model,
-                apiKey: config.apiKey,
                 fallback: result.snapshot.title
             )
         }
@@ -921,7 +916,6 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
             snapshots: snapshots,
             provider: config.provider,
             model: config.model,
-            apiKey: config.apiKey,
             fallback: context.title
         )
         _ = try? sessionManager.renameContext(contextId, title: title)

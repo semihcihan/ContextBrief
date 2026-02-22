@@ -9,19 +9,19 @@ private final class MockSetupPermissionService: PermissionServicing {
     func hasScreenRecordingPermission() -> Bool { true }
 }
 
-private final class MockSetupKeychain: KeychainServicing {
-    private var map: [String: String] = [:]
+private final class MockSetupModelStorage: ProviderModelStoring {
+    private var models: [String: String] = [:]
 
-    func set(_ value: String, for key: String) throws {
-        map[key] = value
+    func setModel(_ model: String, for provider: ProviderName) throws {
+        models[provider.rawValue] = model
     }
 
-    func get(_ key: String) throws -> String? {
-        map[key]
+    func model(for provider: ProviderName) -> String? {
+        models[provider.rawValue]
     }
 
-    func delete(_ key: String) throws {
-        map.removeValue(forKey: key)
+    func deleteModel(for provider: ProviderName) throws {
+        models.removeValue(forKey: provider.rawValue)
     }
 }
 
@@ -111,8 +111,8 @@ final class SetupViewControllerTests: XCTestCase {
         let rootURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("SetupViewControllerTests-\(UUID().uuidString)", isDirectory: true)
         let repository = ContextRepository(rootURL: rootURL)
-        let keychain = MockSetupKeychain()
-        let appStateService = AppStateService(repository: repository, keychain: keychain)
+        let modelStorage = MockSetupModelStorage()
+        let appStateService = AppStateService(repository: repository, modelStorage: modelStorage)
         return (appStateService, repository)
     }
 
