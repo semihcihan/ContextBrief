@@ -47,7 +47,7 @@ Cross-CLI "inject into whatever session is currently active" is not a reliable u
 
 ## External references
 
-- Codex CLI reference (`codex exec`, `--json`, `--output-last-message`, `--skip-git-repo-check`, resume semantics): [OpenAI Codex CLI](https://developers.openai.com/codex/cli/reference#codex-exec)
+- Codex CLI reference (`codex exec`, `--output-last-message`, `--output-schema`, `--skip-git-repo-check`, `-c key=value`, resume semantics): [OpenAI Codex CLI](https://developers.openai.com/codex/cli/reference#codex-exec)
 - Claude headless/non-interactive usage (`-p`, output formats): [Claude headless docs](https://code.claude.com/docs/en/headless)
 - VS Code chat CLI and stdin behavior: [VS Code command-line docs](https://code.visualstudio.com/docs/configure/command-line)
 
@@ -80,7 +80,9 @@ The project at `/Users/semihcihan/Downloads/summarize-main/src/llm` has producti
 
 ### 4) Codex-specific robustness
 
-- Prefer `codex exec --output-last-message <file> --skip-git-repo-check --json`.
+- Prefer `codex exec --output-last-message <file> --skip-git-repo-check` for setup/health-check calls.
+- Keep `--json` on regular densification calls so JSONL events remain available.
+- Use `-c ask_for_approval=never` for non-interactive approvals mode in `exec`.
 - Parse JSONL for usage/cost when needed.
 - Read `<file>` as primary result; use stdout fallback if file is empty.
 
