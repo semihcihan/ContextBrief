@@ -797,7 +797,21 @@ private func extractMessageFromErrorPrefixedLine(_ line: String) -> String? {
     return message
 }
 
+private func isClaudeErrorPayload(_ payload: [String: Any]) -> Bool {
+    (payload["is_error"] as? NSNumber)?.boolValue ?? (payload["is_error"] as? Bool) ?? false
+}
+
+private func claudeErrorMessageIfError(from payload: [String: Any]) -> String? {
+    guard isClaudeErrorPayload(payload) else { return nil }
+    return (payload["result"] as? String)?
+        .trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
+        ?? "Claude CLI returned an error."
+}
+
 private func extractCLIErrorMessage(from payload: [String: Any]) -> String? {
+    if let message = claudeErrorMessageIfError(from: payload) {
+        return message
+    }
     if
         let nestedError = payload["error"] as? [String: Any],
         let message = normalizedCLIErrorText(nestedError["message"] as? String)
@@ -1099,11 +1113,13 @@ private struct ClaudeCLIProviderClient: ProviderClient {
                     model: normalizedModel.nonEmpty,
                     timeoutSeconds: timeoutSeconds
                 )
-                if
-                    let payload = parseJSONPayload(from: result.stdout),
-                    let text = extractCLIText(from: payload)
-                {
-                    return try normalizedCLIResponseText(text, provider: provider)
+                if let payload = parseJSONPayload(from: result.stdout) {
+                    if let message = claudeErrorMessageIfError(from: payload) {
+                        throw AppError.providerRequestRejected(message)
+                    }
+                    if let text = extractCLIText(from: payload) {
+                        return try normalizedCLIResponseText(text, provider: provider)
+                    }
                 }
                 return try normalizedCLIResponseText(result.stdout, provider: provider)
             }
@@ -1136,6 +1152,11 @@ private struct ClaudeCLIProviderClient: ProviderClient {
                     model: normalizedModel.nonEmpty,
                     timeoutSeconds: timeoutSeconds
                 )
+                if let payload = parseJSONPayload(from: result.stdout),
+                   let message = claudeErrorMessageIfError(from: payload)
+                {
+                    throw AppError.providerRequestRejected(message)
+                }
                 let parsed = parseDensificationResponse(stdout: result.stdout)
                 let content = try normalizedCLIResponseText(parsed.content, provider: provider)
                 return DensificationResult(content: content, title: parsed.title)
