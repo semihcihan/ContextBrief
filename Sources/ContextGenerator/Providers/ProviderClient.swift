@@ -719,9 +719,10 @@ private func parseJSONPayload(from rawOutput: String) -> [String: Any]? {
 
 private func extractCLIText(from payload: [String: Any]) -> String? {
     let keys = ["content", "result", "response", "output", "message", "text"]
+    let source = (payload["structured_output"] as? [String: Any]) ?? payload
     for key in keys {
         if
-            let value = payload[key] as? String,
+            let value = source[key] as? String,
             !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         {
             return value.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -731,8 +732,10 @@ private func extractCLIText(from payload: [String: Any]) -> String? {
 }
 
 private func extractCLITitle(from payload: [String: Any]) -> String? {
+    let source: String? = (payload["structured_output"] as? [String: Any])?["title"] as? String
+        ?? payload["title"] as? String
     guard
-        let value = payload["title"] as? String,
+        let value = source,
         !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     else {
         return nil
