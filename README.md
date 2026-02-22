@@ -6,7 +6,7 @@ Context Brief is a macOS menu bar app that captures what you are working on, cle
 
 - Captures context from your frontmost app or browser tab.
 - Uses Accessibility first, then screenshot + OCR fallback when needed.
-- Densifies captured content with your own provider API key.
+- Densifies captured content using installed provider CLIs (Codex, Claude, Gemini).
 - Stores your context history locally on your Mac.
 - Lets you keep one current context and keep appending snapshots to it.
 
@@ -39,8 +39,8 @@ brew install semihcihan/contextbrief/contextbrief
 1. Grant permissions for capturing context:
    - Accessibility
    - Screen Recording
-2. Select your provider.
-3. Enter model and API key.
+2. Select your CLI provider (Codex, Claude, or Gemini).
+3. Enter model (optional; defaults are suggested).
 4. Finish setup.
 
 Until setup is complete, capture actions remain blocked.
@@ -57,8 +57,8 @@ Until setup is complete, capture actions remain blocked.
 - Contexts are stored locally:
   - `~/Library/Application Support/ContextBrief/store.json`
   - `~/Library/Application Support/ContextBrief/artifacts/*.png`
-- API keys are stored in macOS Keychain.
-- Model requests go only to your selected provider using your key.
+- Provider model preference is stored in UserDefaults (no API keys; CLIs use their own auth).
+- Model requests go through your installed CLI to your selected provider.
 
 ## License
 

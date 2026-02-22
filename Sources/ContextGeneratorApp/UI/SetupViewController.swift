@@ -7,7 +7,6 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
     private struct SetupSnapshot: Equatable {
         let provider: ProviderName?
         let model: String
-        let apiKey: String
     }
 
     private let permissionService: PermissionServicing
@@ -17,9 +16,7 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
 
     private let providerPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let modelField = NSTextField(string: "")
-    private let keyField = NSSecureTextField(frame: .zero)
     private var modelRow: NSView?
-    private var keyRow: NSView?
     private let appleProviderWarningLabel = NSTextField(wrappingLabelWithString: "")
     private var appleProviderWarningRow: NSView?
     private let infoLabel = NSTextField(labelWithString: "")
@@ -105,17 +102,6 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
             modelCell.usesSingleLineMode = true
             modelCell.lineBreakMode = .byTruncatingTail
         }
-        keyField.delegate = self
-        keyField.target = self
-        keyField.action = #selector(inputFieldsChanged)
-        keyField.maximumNumberOfLines = 1
-        keyField.lineBreakMode = .byTruncatingTail
-        if let keyCell = keyField.cell as? NSTextFieldCell {
-            keyCell.wraps = false
-            keyCell.isScrollable = true
-            keyCell.usesSingleLineMode = true
-            keyCell.lineBreakMode = .byTruncatingTail
-        }
         validationSpinner.style = .spinning
         validationSpinner.controlSize = .small
         validationSpinner.isDisplayedWhenStopped = false
@@ -149,9 +135,6 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
         let modelRow = labeledRow(label: "Model", view: modelField)
         self.modelRow = modelRow
         fieldColumn.addArrangedSubview(modelRow)
-        let keyRow = labeledRow(label: "API Key", view: keyField)
-        self.keyRow = keyRow
-        fieldColumn.addArrangedSubview(keyRow)
         stack.addArrangedSubview(fieldColumn)
         launchAtLoginCheckbox.target = self
         launchAtLoginCheckbox.action = #selector(toggleLaunchAtLogin)
@@ -195,7 +178,6 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
             stack.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             fieldColumn.widthAnchor.constraint(equalToConstant: 460),
             modelField.widthAnchor.constraint(greaterThanOrEqualToConstant: fieldMinWidth),
-            keyField.widthAnchor.constraint(equalTo: modelField.widthAnchor),
             buttonColumn.widthAnchor.constraint(equalToConstant: 240),
             requestPermissionsButton.widthAnchor.constraint(equalTo: finishSetupButton.widthAnchor),
             requestPermissionsButton.heightAnchor.constraint(equalToConstant: 30),
@@ -280,19 +262,7 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
         }
 
         let model = modelField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        let requiresCredentials = providerRequiresCredentials(provider)
-        guard !requiresCredentials || !model.isEmpty else {
-            infoLabel.stringValue = "Model is required."
-            return
-        }
-
-        let apiKeyForValidation = normalizedAPIKey(keyField.stringValue)
-        keyField.stringValue = apiKeyForValidation
         infoLabel.stringValue = "Validating CLI access..."
-        guard !requiresCredentials || !apiKeyForValidation.isEmpty else {
-            infoLabel.stringValue = "API key is required."
-            return
-        }
 
         setValidationInProgress(true)
         updateActionAvailability()
@@ -302,11 +272,10 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
                 return
             }
             do {
-                try await self.validateProvider(provider: provider, model: model, apiKey: apiKeyForValidation)
+                try await self.validateProvider(provider: provider, model: model)
                 try self.appStateService.configureProvider(
                     provider: provider,
-                    model: model,
-                    apiKey: requiresCredentials ? apiKeyForValidation : nil
+                    model: model
                 )
                 try self.appStateService.markOnboardingCompleted()
                 await MainActor.run {
@@ -366,7 +335,6 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
     }
 
     func controlTextDidChange(_ notification: Notification) {
-        normalizeInputFields()
         updateActionAvailability()
     }
 
@@ -389,7 +357,7 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
         )
     }
 
-    private func validateProvider(provider: ProviderName, model: String, apiKey: String) async throws {
+    private func validateProvider(provider: ProviderName, model: String) async throws {
         let client = ProviderClientFactory.make(provider: provider)
         let request = DensificationRequest(
             inputText: "Health check. Reply with OK.",
@@ -398,7 +366,6 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
         )
         _ = try await client.densify(
             request: request,
-            apiKey: apiKey,
             model: model
         )
     }
@@ -408,7 +375,7 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
             let state = try appStateService.state()
             onboardingCompletedAtLoad = state.onboardingCompleted
             guard let selection = try appStateService.providerSelection() else {
-                applySavedModelAndAPIKey(for: currentSelectedProvider())
+                applySavedModel(for: currentSelectedProvider())
                 initialSnapshot = currentSnapshot()
                 updateInfoLabelForLoadedState(selection: nil)
                 updateProviderFieldAvailability()
@@ -417,14 +384,14 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
             }
             if availableProviders().contains(selection.provider) {
                 selectProvider(selection.provider)
-                applySavedModelAndAPIKey(for: selection.provider, fallbackModel: selection.model)
+                applySavedModel(for: selection.provider, fallbackModel: selection.model)
                 initialSnapshot = currentSnapshot()
                 updateInfoLabelForLoadedState(selection: selection)
                 updateProviderFieldAvailability()
                 updateActionAvailability()
                 return
             }
-            applySavedModelAndAPIKey(for: currentSelectedProvider())
+            applySavedModel(for: currentSelectedProvider())
             initialSnapshot = currentSnapshot()
             updateInfoLabelForLoadedState(selection: nil)
             updateProviderFieldAvailability()
@@ -442,10 +409,6 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
         [.codex, .claude, .gemini]
     }
 
-    private func providerRequiresCredentials(_ provider: ProviderName) -> Bool {
-        developmentConfig.requiresCredentials(for: provider)
-    }
-
     private func selectProvider(_ provider: ProviderName) {
         guard
             let index = providerPopup.itemArray.firstIndex(where: {
@@ -461,22 +424,8 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
         guard let provider = currentSelectedProvider() else {
             return
         }
-        applySavedModelAndAPIKey(for: provider, fallbackModel: "")
+        applySavedModel(for: provider, fallbackModel: "")
         updateProviderFieldAvailability()
-        if providerRequiresCredentials(provider) {
-            let hasModel = !normalizedModel(modelField.stringValue).isEmpty
-            let hasAPIKey = !normalizedAPIKey(keyField.stringValue).isEmpty
-            if hasModel && hasAPIKey {
-                infoLabel.stringValue = onboardingCompletedAtLoad ? "" : "Ready to finish setup."
-                updateActionAvailability()
-                return
-            }
-            infoLabel.stringValue = onboardingCompletedAtLoad
-                ? "Enter model and API key to save changes."
-                : "Enter model and API key to complete setup."
-            updateActionAvailability()
-            return
-        }
         infoLabel.stringValue = onboardingCompletedAtLoad
             ? ""
             : "\(provider.displayName) selected. Model is optional."
@@ -493,40 +442,24 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
         return provider
     }
 
-    private func applySavedModelAndAPIKey(for provider: ProviderName?, fallbackModel: String? = nil) {
+    private func applySavedModel(for provider: ProviderName?, fallbackModel: String? = nil) {
         let normalizedFallbackModel = fallbackModel?.trimmingCharacters(in: .whitespacesAndNewlines)
         let fallbackModelValue = (normalizedFallbackModel?.isEmpty == false) ? normalizedFallbackModel : nil
         guard let provider else {
             modelField.stringValue = fallbackModelValue ?? modelField.stringValue
-            keyField.stringValue = ""
             return
         }
         let savedModel = (try? appStateService.model(for: provider)) ?? fallbackModelValue ?? defaultModel(for: provider)
         modelField.stringValue = savedModel
-        if providerRequiresCredentials(provider) {
-            let savedKey = (try? appStateService.apiKey(for: provider)) ?? nil
-            keyField.stringValue = normalizedAPIKey(savedKey ?? "")
-            return
-        }
-        keyField.stringValue = ""
     }
 
     private func updateProviderFieldAvailability() {
         let enabled = !setupValidationInProgress
-        let requiresCredentials = currentSelectedProvider().map(providerRequiresCredentials) ?? true
         appleProviderWarningRow?.isHidden = true
         modelRow?.isHidden = false
-        keyRow?.isHidden = !requiresCredentials
         modelField.isEnabled = enabled
         modelField.isEditable = enabled
-        keyField.isEnabled = enabled && requiresCredentials
-        keyField.isEditable = enabled && requiresCredentials
         modelField.placeholderString = currentSelectedProvider().map(defaultModel) ?? defaultModel(for: .codex)
-        if requiresCredentials {
-            keyField.placeholderString = ""
-            return
-        }
-        keyField.placeholderString = nil
     }
 
     private func defaultModel(for provider: ProviderName) -> String {
@@ -540,20 +473,6 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
         }
     }
 
-    private func normalizeInputFields() {
-        let normalizedKey = normalizedAPIKey(keyField.stringValue)
-        if keyField.stringValue != normalizedKey {
-            keyField.stringValue = normalizedKey
-        }
-    }
-
-    private func normalizedAPIKey(_ value: String) -> String {
-        value
-            .components(separatedBy: .newlines)
-            .joined()
-            .trimmingCharacters(in: .whitespaces)
-    }
-
     private func normalizedModel(_ value: String) -> String {
         value.trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -563,20 +482,13 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
     }
 
     private func providerConfigurationReady() -> Bool {
-        let requiresCredentials = currentSelectedProvider().map(providerRequiresCredentials) ?? true
-        if !requiresCredentials {
-            return true
-        }
-        let hasModel = !normalizedModel(modelField.stringValue).isEmpty
-        let hasAPIKey = !normalizedAPIKey(keyField.stringValue).isEmpty
-        return hasModel && hasAPIKey
+        true
     }
 
     private func currentSnapshot() -> SetupSnapshot {
         SetupSnapshot(
             provider: currentSelectedProvider(),
-            model: normalizedModel(modelField.stringValue),
-            apiKey: normalizedAPIKey(keyField.stringValue)
+            model: normalizedModel(modelField.stringValue)
         )
     }
 
@@ -609,19 +521,9 @@ final class SetupViewController: NSViewController, NSTextFieldDelegate {
                 infoLabel.stringValue = onboardingCompletedAtLoad ? "" : "Select a CLI tool to complete setup."
                 return
             }
-            if providerRequiresCredentials(selectedProvider) {
-                infoLabel.stringValue = onboardingCompletedAtLoad ? "" : "Select tool, model, and API key to complete setup."
-                return
-            }
             infoLabel.stringValue = onboardingCompletedAtLoad
                 ? ""
                 : "\(selectedProvider.displayName) selected. Model is optional."
-            return
-        }
-        if providerRequiresCredentials(selection.provider) {
-            infoLabel.stringValue = selection.hasAPIKey
-                ? (onboardingCompletedAtLoad ? "" : "Ready to finish setup.")
-                : "Saved provider/model found. Add an API key to complete setup."
             return
         }
         infoLabel.stringValue = onboardingCompletedAtLoad
@@ -677,11 +579,11 @@ extension SetupViewController {
     }
 
     func testingKeyFieldEnabled() -> Bool {
-        keyField.isEnabled && keyField.isEditable
+        false
     }
 
     func testingAPIKeyRowVisible() -> Bool {
-        !(keyRow?.isHidden ?? true)
+        false
     }
 
     func testingAppleProviderWarningVisible() -> Bool {
@@ -697,7 +599,7 @@ extension SetupViewController {
     }
 
     func testingAPIKeyValue() -> String {
-        keyField.stringValue
+        ""
     }
 
     func testingInfoLabelValue() -> String {
@@ -721,10 +623,7 @@ extension SetupViewController {
         controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
     }
 
-    func testingSetAPIKeyValue(_ value: String) {
-        keyField.stringValue = value
-        controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
-    }
+    func testingSetAPIKeyValue(_ value: String) {}
 }
 
 private extension ProviderName {

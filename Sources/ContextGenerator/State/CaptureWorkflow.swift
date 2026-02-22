@@ -18,18 +18,15 @@ public final class CaptureWorkflow {
     private let sessionManager: ContextSessionManager
     private let repository: ContextRepositorying
     private let densificationService: Densifying
-    private let keychain: KeychainServicing
 
     public init(
         sessionManager: ContextSessionManager,
         repository: ContextRepositorying,
-        densificationService: Densifying,
-        keychain: KeychainServicing
+        densificationService: Densifying
     ) {
         self.sessionManager = sessionManager
         self.repository = repository
         self.densificationService = densificationService
-        self.keychain = keychain
     }
 
     public func runCapture(
@@ -45,15 +42,13 @@ public final class CaptureWorkflow {
         }
         let provider = DevelopmentConfig.shared.providerForDensification(selectedProvider: selectedProvider)
         let model = state.selectedModel ?? ""
-        let key = try keychain.get("api.\(provider.rawValue)") ?? ""
 
         let snapshot: Snapshot
         let suggestedTitle: String?
         switch await densifyWithRetry(
             snapshot: capturedSnapshot,
             provider: provider,
-            model: model,
-            apiKey: key
+            model: model
         ) {
         case .success(let dense, let title, let retriesPerformed):
             suggestedTitle = title
@@ -96,8 +91,7 @@ public final class CaptureWorkflow {
     private func densifyWithRetry(
         snapshot: CapturedSnapshot,
         provider: ProviderName,
-        model: String,
-        apiKey: String
+        model: String
     ) async -> DensificationOutcome {
         var retriesPerformed = 0
         for attempt in 1 ... maxDensificationAttempts {
@@ -105,8 +99,7 @@ public final class CaptureWorkflow {
                 let (dense, title) = try await densificationService.densify(
                     snapshot: snapshot,
                     provider: provider,
-                    model: model,
-                    apiKey: apiKey
+                    model: model
                 )
                 AppLogger.debug(
                     "Densification succeeded [provider=\(provider.rawValue) retriesPerformed=\(retriesPerformed) snapshot=\(snapshot.id.uuidString)]"

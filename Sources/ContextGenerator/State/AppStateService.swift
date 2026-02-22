@@ -2,33 +2,28 @@ import Foundation
 
 public final class AppStateService {
     private let repository: ContextRepositorying
-    private let keychain: KeychainServicing
+    private let modelStorage: ProviderModelStoring
 
     public struct ProviderSelection {
         public let provider: ProviderName
         public let model: String
-        public let hasAPIKey: Bool
 
-        public init(provider: ProviderName, model: String, hasAPIKey: Bool) {
+        public init(provider: ProviderName, model: String) {
             self.provider = provider
             self.model = model
-            self.hasAPIKey = hasAPIKey
         }
     }
 
-    public init(repository: ContextRepositorying, keychain: KeychainServicing) {
+    public init(repository: ContextRepositorying, modelStorage: ProviderModelStoring) {
         self.repository = repository
-        self.keychain = keychain
+        self.modelStorage = modelStorage
     }
 
-    public func configureProvider(provider: ProviderName, model: String, apiKey: String?) throws {
-        if let apiKey, !apiKey.isEmpty {
-            try keychain.set(apiKey, for: "api.\(provider.rawValue)")
-        }
+    public func configureProvider(provider: ProviderName, model: String, apiKey: String? = nil) throws {
         if !model.isEmpty {
-            try keychain.set(model, for: modelStorageKey(for: provider))
+            try modelStorage.setModel(model, for: provider)
         } else {
-            try? keychain.delete(modelStorageKey(for: provider))
+            try? modelStorage.deleteModel(for: provider)
         }
         var state = try repository.appState()
         state.selectedProvider = provider
@@ -67,23 +62,11 @@ public final class AppStateService {
         guard let provider = state.selectedProvider else {
             return nil
         }
-        let model = try keychain.get(modelStorageKey(for: provider)) ?? state.selectedModel ?? ""
-        return ProviderSelection(
-            provider: provider,
-            model: model,
-            hasAPIKey: provider.requiresCredentials ? ((try keychain.get("api.\(provider.rawValue)")) != nil) : true
-        )
-    }
-
-    public func apiKey(for provider: ProviderName) throws -> String? {
-        try keychain.get("api.\(provider.rawValue)")
+        let model = modelStorage.model(for: provider) ?? state.selectedModel ?? ""
+        return ProviderSelection(provider: provider, model: model)
     }
 
     public func model(for provider: ProviderName) throws -> String? {
-        try keychain.get(modelStorageKey(for: provider))
-    }
-
-    private func modelStorageKey(for provider: ProviderName) -> String {
-        "model.\(provider.rawValue)"
+        modelStorage.model(for: provider)
     }
 }

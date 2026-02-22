@@ -41,13 +41,13 @@ public struct ProviderTextRequest {
 
 public protocol ProviderClient {
     var provider: ProviderName { get }
-    func requestText(request: ProviderTextRequest, apiKey: String, model: String) async throws -> String
-    func densify(request: DensificationRequest, apiKey: String, model: String) async throws -> DensificationResult
-    func requestDensification(request: DensificationRequest, apiKey: String, model: String) async throws -> DensificationResult
+    func requestText(request: ProviderTextRequest, model: String) async throws -> String
+    func densify(request: DensificationRequest, model: String) async throws -> DensificationResult
+    func requestDensification(request: DensificationRequest, model: String) async throws -> DensificationResult
 }
 
 public extension ProviderClient {
-    func densify(request: DensificationRequest, apiKey: String, model: String) async throws -> DensificationResult {
+    func densify(request: DensificationRequest, model: String) async throws -> DensificationResult {
         let startedAt = Date()
         try await forceFailure()
         if DevelopmentConfig.shared.localDebugResponsesEnabled {
@@ -59,7 +59,7 @@ public extension ProviderClient {
             )
             return DensificationResult(content: output, title: nil)
         }
-        let result = try await requestDensification(request: request, apiKey: apiKey, model: model)
+        let result = try await requestDensification(request: request, model: model)
         AppLogger.debug(
             "Densification completed [provider=\(provider.rawValue) runs=1 seconds=\(formattedElapsedSeconds(since: startedAt))]"
         )
@@ -920,7 +920,7 @@ private func parseDensificationResponse(stdout: String, fileContent: String? = n
 private struct CodexCLIProviderClient: ProviderClient {
     let provider: ProviderName = .codex
 
-    func requestText(request: ProviderTextRequest, apiKey: String, model: String) async throws -> String {
+    func requestText(request: ProviderTextRequest, model: String) async throws -> String {
         let prompt = try validatedPromptTextForCLI(request, provider: provider)
         let normalizedModel = try normalizedCLIModel(for: provider, rawModel: model)
         let binary = resolveCLIBinary(for: provider)
@@ -971,7 +971,7 @@ private struct CodexCLIProviderClient: ProviderClient {
         }
     }
 
-    func requestDensification(request: DensificationRequest, apiKey: String, model: String) async throws -> DensificationResult {
+    func requestDensification(request: DensificationRequest, model: String) async throws -> DensificationResult {
         let textRequest = ProviderTextRequest(
             systemInstruction: densificationSystemInstruction,
             prompt: densificationPromptForStructuredOutput(for: request)
@@ -1023,7 +1023,7 @@ private struct CodexCLIProviderClient: ProviderClient {
 private struct ClaudeCLIProviderClient: ProviderClient {
     let provider: ProviderName = .claude
 
-    func requestText(request: ProviderTextRequest, apiKey: String, model: String) async throws -> String {
+    func requestText(request: ProviderTextRequest, model: String) async throws -> String {
         let prompt = try validatedPromptTextForCLI(request, provider: provider)
         let normalizedModel = try normalizedCLIModel(for: provider, rawModel: model)
         let binary = resolveCLIBinary(for: provider)
@@ -1055,7 +1055,7 @@ private struct ClaudeCLIProviderClient: ProviderClient {
         }
     }
 
-    func requestDensification(request: DensificationRequest, apiKey: String, model: String) async throws -> DensificationResult {
+    func requestDensification(request: DensificationRequest, model: String) async throws -> DensificationResult {
         let textRequest = ProviderTextRequest(
             systemInstruction: densificationSystemInstruction,
             prompt: densificationPromptForStructuredOutput(for: request)
@@ -1092,7 +1092,7 @@ private struct ClaudeCLIProviderClient: ProviderClient {
 private struct GeminiCLIProviderClient: ProviderClient {
     let provider: ProviderName = .gemini
 
-    func requestText(request: ProviderTextRequest, apiKey: String, model: String) async throws -> String {
+    func requestText(request: ProviderTextRequest, model: String) async throws -> String {
         let prompt = try validatedPromptTextForCLI(request, provider: provider)
         let normalizedModel = try normalizedCLIModel(for: provider, rawModel: model)
         let binary = resolveCLIBinary(for: provider)
@@ -1158,7 +1158,7 @@ private struct GeminiCLIProviderClient: ProviderClient {
         return try normalizedCLIResponseText(result.stdout, provider: provider)
     }
 
-    func requestDensification(request: DensificationRequest, apiKey: String, model: String) async throws -> DensificationResult {
+    func requestDensification(request: DensificationRequest, model: String) async throws -> DensificationResult {
         let textRequest = ProviderTextRequest(
             systemInstruction: densificationSystemInstruction,
             prompt: densificationPrompt(for: request)

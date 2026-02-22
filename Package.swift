@@ -26,8 +26,7 @@ let package = Package(
                 .linkedFramework("AppKit"),
                 .linkedFramework("ApplicationServices"),
                 .linkedFramework("CoreGraphics"),
-                .linkedFramework("Vision"),
-                .linkedFramework("Security")
+                .linkedFramework("Vision")
             ]
         ),
         .executableTarget(
