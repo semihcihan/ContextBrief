@@ -59,7 +59,7 @@ final class SetupViewControllerTests: XCTestCase {
 
     func testCompletedSetupLoadsWithNeutralInfoAndDisabledSaveChanges() throws {
         let (appStateService, _) = try makeAppStateService()
-        try appStateService.configureProvider(provider: .codex, model: "gpt-5-nano", apiKey: nil)
+        try appStateService.configureProvider(provider: .codex, model: "gpt-5-codex-mini", apiKey: nil)
         try appStateService.markOnboardingCompleted()
 
         let controller = makeController(
@@ -76,7 +76,7 @@ final class SetupViewControllerTests: XCTestCase {
 
     func testCompletedSetupEnablesSaveChangesWhenModelChanges() throws {
         let (appStateService, _) = try makeAppStateService()
-        try appStateService.configureProvider(provider: .codex, model: "gpt-5-nano", apiKey: nil)
+        try appStateService.configureProvider(provider: .codex, model: "gpt-5-codex-mini", apiKey: nil)
         try appStateService.markOnboardingCompleted()
 
         let controller = makeController(

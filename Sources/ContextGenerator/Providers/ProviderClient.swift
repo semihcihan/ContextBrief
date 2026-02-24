@@ -357,16 +357,156 @@ private func normalizedCLIResponseText(_ value: String, provider: ProviderName) 
     return String(trimmed.prefix(maxCLIResponseCharacters))
 }
 
+private func cliBinarySearchPaths() -> [String] {
+    let fileManager = FileManager.default
+    let homeDirectory = NSHomeDirectory()
+    var paths = ["/opt/homebrew/bin", "/usr/local/bin"]
+
+    let userBinCandidates = [
+        "bin",
+        ".local/bin",
+        ".volta/bin"
+    ].map { (homeDirectory as NSString).appendingPathComponent($0) }
+    for candidate in userBinCandidates where fileManager.fileExists(atPath: candidate) {
+        paths.append(candidate)
+    }
+
+    let nvmNodeVersionsDirectory = (homeDirectory as NSString).appendingPathComponent(".nvm/versions/node")
+    if let versionDirectories = try? fileManager.contentsOfDirectory(atPath: nvmNodeVersionsDirectory) {
+        let nvmBinPaths = versionDirectories
+            .sorted(by: >)
+            .map { version in
+                ((nvmNodeVersionsDirectory as NSString).appendingPathComponent(version) as NSString)
+                    .appendingPathComponent("bin")
+            }
+            .filter { fileManager.fileExists(atPath: $0) }
+        paths.append(contentsOf: nvmBinPaths)
+    }
+
+    return paths
+}
+
+private let cliBinaryCacheLock = NSLock()
+private var cliBinaryCache = [String: String]()
+
+private func cachedResolvedBinary(named name: String) -> String? {
+    cliBinaryCacheLock.lock()
+    defer { cliBinaryCacheLock.unlock() }
+    return cliBinaryCache[name]
+}
+
+private func cacheResolvedBinary(_ resolvedPath: String, forName name: String) {
+    cliBinaryCacheLock.lock()
+    defer { cliBinaryCacheLock.unlock() }
+    cliBinaryCache[name] = resolvedPath
+}
+
+private func resolveBinaryInSearchPaths(_ name: String) -> String? {
+    let fileManager = FileManager.default
+    for dir in cliBinarySearchPaths() {
+        let candidate = (dir as NSString).appendingPathComponent(name)
+        if fileManager.fileExists(atPath: candidate), fileManager.isExecutableFile(atPath: candidate) {
+            return candidate
+        }
+    }
+    return nil
+}
+
+private func runLoginShellBinaryLookup(shell: String, binaryName: String, environment: [String: String]) -> String? {
+    let process = Process()
+    let stdoutPipe = Pipe()
+    let stderrPipe = Pipe()
+    process.executableURL = URL(fileURLWithPath: shell)
+    process.arguments = ["-lic", "command -v -- \"$CONTEXTBRIEF_LOOKUP_BINARY\""]
+    var processEnvironment = environment
+    processEnvironment["CONTEXTBRIEF_LOOKUP_BINARY"] = binaryName
+    process.environment = processEnvironment
+    process.standardOutput = stdoutPipe
+    process.standardError = stderrPipe
+
+    let timeoutWorkItem = DispatchWorkItem {
+        if process.isRunning {
+            process.terminate()
+        }
+    }
+    DispatchQueue.global().asyncAfter(deadline: .now() + 4, execute: timeoutWorkItem)
+
+    do {
+        try process.run()
+    } catch {
+        timeoutWorkItem.cancel()
+        return nil
+    }
+    process.waitUntilExit()
+    timeoutWorkItem.cancel()
+    guard process.terminationStatus == 0 else {
+        return nil
+    }
+    let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+    guard let stdout = String(data: stdoutData, encoding: .utf8) else {
+        return nil
+    }
+    let fileManager = FileManager.default
+    for line in stdout.split(whereSeparator: \.isNewline) {
+        let candidate = String(line).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard candidate.hasPrefix("/") else {
+            continue
+        }
+        if fileManager.fileExists(atPath: candidate), fileManager.isExecutableFile(atPath: candidate) {
+            return candidate
+        }
+    }
+    return nil
+}
+
+private func resolveBinaryFromLoginShell(_ binaryName: String) -> String? {
+    let environment = ProcessInfo.processInfo.environment
+    var shells = [String]()
+    if let configuredShell = environment["SHELL"]?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty {
+        shells.append(configuredShell)
+    }
+    shells.append("/bin/zsh")
+    shells.append("/bin/bash")
+
+    var tried = Set<String>()
+    for shell in shells where !tried.contains(shell) {
+        tried.insert(shell)
+        guard FileManager.default.isExecutableFile(atPath: shell) else {
+            continue
+        }
+        if let resolved = runLoginShellBinaryLookup(shell: shell, binaryName: binaryName, environment: environment) {
+            return resolved
+        }
+    }
+    return nil
+}
+
 private func resolveCLIBinary(for provider: ProviderName) -> String {
     let environment = ProcessInfo.processInfo.environment
+    let candidate: String
     switch provider {
     case .codex:
-        return environment["CODEX_PATH"]?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? "codex"
+        candidate = environment["CODEX_PATH"]?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? "codex"
     case .claude:
-        return environment["CLAUDE_PATH"]?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? "claude"
+        candidate = environment["CLAUDE_PATH"]?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? "claude"
     case .gemini:
-        return environment["GEMINI_PATH"]?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? "gemini"
+        candidate = environment["GEMINI_PATH"]?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? "gemini"
     }
+    if candidate.contains("/") {
+        return candidate
+    }
+    if let cached = cachedResolvedBinary(named: candidate) {
+        return cached
+    }
+    if let resolvedFromShell = resolveBinaryFromLoginShell(candidate) {
+        cacheResolvedBinary(resolvedFromShell, forName: candidate)
+        return resolvedFromShell
+    }
+    if let resolvedFromKnownPaths = resolveBinaryInSearchPaths(candidate) {
+        cacheResolvedBinary(resolvedFromKnownPaths, forName: candidate)
+        return resolvedFromKnownPaths
+    }
+    return candidate
 }
 
 private func runCLICommand(
@@ -404,13 +544,23 @@ private func runCLICommand(
             processArguments.insert(binary, at: 0)
         }
         process.arguments = processArguments
-        if !environmentOverrides.isEmpty {
-            var mergedEnvironment = ProcessInfo.processInfo.environment
-            for (key, value) in environmentOverrides {
-                mergedEnvironment[key] = value
+        var mergedEnvironment = ProcessInfo.processInfo.environment
+        let existingPath = mergedEnvironment["PATH"] ?? ""
+        var searchPaths = cliBinarySearchPaths()
+        if binary.contains("/") {
+            let binaryDirectory = (binary as NSString).deletingLastPathComponent
+            if !binaryDirectory.isEmpty {
+                searchPaths.insert(binaryDirectory, at: 0)
             }
-            process.environment = mergedEnvironment
         }
+        let effectivePath = [searchPaths.joined(separator: ":"), existingPath]
+            .filter { !$0.isEmpty }
+            .joined(separator: ":")
+        mergedEnvironment["PATH"] = effectivePath
+        for (key, value) in environmentOverrides {
+            mergedEnvironment[key] = value
+        }
+        process.environment = mergedEnvironment
 
         let timeoutWorkItem = DispatchWorkItem {
             executionState.markTimeoutTriggered()
