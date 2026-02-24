@@ -24,10 +24,17 @@ public struct DensificationResult {
 
 public struct ProviderTextRequest {
     static let commonPrompt = [
-        "Keep meaningful facts, intent, actions, outcomes, constraints, and errors.",
-        "Remove low-signal UI noise such as nav labels, menu items, generic button text, repeated form labels, and boilerplate chrome.",
-        "Keep UI text only when it changes meaning (for example selected options, warnings, status, or action-specific labels).",
-        "Do not add assumptions.",
+        "Extract the semantic content from captured UI or OCR text.",
+        "Keep User-visible content that conveys meaning",
+        """
+        Remove:
+        - UI structure (navigation, menus, toolbars, sidebars, footers)
+        - Accessibility roles, control names, and layout markers
+        - Repeated labels, decorative text, and fragmented tokens
+        - Platform or app scaffolding not part of the main content
+        - Text that exists to operate the interface rather than convey information.
+        """,
+        "Do not summarize, rewrite, or infer.",
         "Return dense plain text only.",
     ]
     public let systemInstruction: String?
