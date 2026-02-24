@@ -22,17 +22,23 @@ Context Brief is a macOS menu bar app that captures what you are working on, cle
 
 ## Install
 
-### Option 1: Homebrew
+### Option 1: DMG
+
+1. Download `ContextBrief.dmg` from the [latest GitHub release](https://github.com/semihcihan/contextbrief/releases/latest).
+2. Open the DMG and drag `ContextBrief.app` into `/Applications`.
+3. Launch `ContextBrief`.
+
+### Option 2: Homebrew
 
 ```bash
 brew install semihcihan/contextbrief/contextbrief
 ```
 
-### Option 2: DMG
+To update:
 
-1. Download `ContextBrief.dmg` from the [latest GitHub release](https://github.com/semihcihan/contextbrief/releases/latest).
-2. Open the DMG and drag `ContextBrief.app` into `/Applications`.
-3. Launch `ContextBrief`.
+```bash
+brew update && brew upgrade contextbrief
+```
 
 ## First launch setup
 
@@ -40,7 +46,7 @@ brew install semihcihan/contextbrief/contextbrief
    - Accessibility
    - Screen Recording
 2. Select your CLI provider (Codex, Claude, or Gemini).
-3. Enter model (optional; defaults are suggested).
+3. Enter model (optional).
 4. Finish setup.
 
 Until setup is complete, capture actions remain blocked.
