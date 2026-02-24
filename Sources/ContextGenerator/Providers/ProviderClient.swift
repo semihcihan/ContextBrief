@@ -24,19 +24,28 @@ public struct DensificationResult {
 
 public struct ProviderTextRequest {
     static let commonPrompt = [
-        "Extract the semantic content from captured UI or OCR text",
-        "Keep user-visible content that conveys substantive information (requirements decisions questions answers logic constraints data)",
+        "Convert captured UI or OCR text into dense contextual content.",
         """
-        Remove:
-        - UI structure (navigation menus toolbars sidebars footers)
-        - Accessibility roles, control names, and layout markers
-        - Repeated labels, decorative text, and fragmented tokens
-        - Platform or app scaffolding not part of the main content
-        - Text that exists to operate the interface rather than convey information
-        - Greetings, acknowledgements, conversational filler, and coordination chatter
+        Preserve exactly:
+        - Code blocks, parameters, identifiers, structured data, configs, versions, constants
+        - Errors, warnings, constraints, rules, logic, requirements, decisions
+        - Keywords and domain-specific terminology
         """,
-        "Preserve original wording of retained content",
-        "Do not summarize, rewrite, or infer",
+        """
+        Compress lightly:
+        - Explanatory or repetitive prose, while preserving full meaning
+        - Conversational phrasing, keeping only task-relevant substance
+        """,
+        """
+        Remove entirely:
+        - UI structure (navigation, menus, toolbars, sidebars, footers)
+        - Accessibility roles, control names, layout markers
+        - Repeated labels and decorative text
+        - Text used only to operate the interface
+        - Greetings, acknowledgements, and social filler
+        """,
+        "Do not infer or add information",
+        "Do not omit potentially important context",
         "Return dense plain text only"
     ]
     public let systemInstruction: String?
@@ -1090,33 +1099,70 @@ private func logDensificationRawOutput(raw: String) {
     }
 }
 
-private func parseJsonFromOutput(_ output: String) -> [String: Any]? {
-    let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmed.isEmpty else { return nil }
-    if trimmed.first == "{" {
-        return parseJSONPayload(from: trimmed)
-    }
-    if let range = trimmed.range(of: "\n{", options: .backwards) {
-        let fromBrace = trimmed.index(range.lowerBound, offsetBy: 1)
-        var candidate = String(trimmed[fromBrace...]).trimmingCharacters(in: .whitespacesAndNewlines)
-        if candidate.hasSuffix("```") {
-            candidate = String(candidate.dropLast(3)).trimmingCharacters(in: .whitespacesAndNewlines)
-        } else if candidate.hasSuffix("\n```") {
-            candidate = String(candidate.dropLast(4)).trimmingCharacters(in: .whitespacesAndNewlines)
+func extractOuterJSONObject(from s: String) -> String? {
+    guard let openIndex = s.firstIndex(where: { $0 == "{" }) else { return nil }
+    var depth = 1
+    var inString = false
+    var escape = false
+    var stringChar: Character = "\""
+    var i = s.index(after: openIndex)
+    let endIndex = s.endIndex
+    while i < endIndex {
+        let c = s[i]
+        if escape {
+            escape = false
+            i = s.index(after: i)
+            continue
         }
-        return parseJSONPayload(from: candidate)
+        if inString {
+            if c == "\\" {
+                escape = true
+            } else if c == stringChar {
+                inString = false
+            }
+            i = s.index(after: i)
+            continue
+        }
+        if c == "\"" || c == "'" {
+            inString = true
+            stringChar = c
+            i = s.index(after: i)
+            continue
+        }
+        if c == "{" {
+            depth += 1
+        } else if c == "}" {
+            depth -= 1
+            if depth == 0 {
+                return String(s[openIndex...i])
+            }
+        }
+        i = s.index(after: i)
     }
     return nil
 }
 
+func parseDensificationEmbeddedPayload(from raw: String) -> [String: Any]? {
+    if let payload = parseJSONPayload(from: raw) {
+        return payload
+    }
+    guard let extracted = extractOuterJSONObject(from: raw.trimmingCharacters(in: .whitespacesAndNewlines)),
+          let data = extracted.data(using: .utf8),
+          let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    else {
+        return nil
+    }
+    return payload
+}
+
 private func extractDensificationFromEmbeddedString(_ raw: String) -> (content: String, title: String?)? {
-    guard let payload = parseJsonFromOutput(raw) else { return nil }
+    guard let payload = parseDensificationEmbeddedPayload(from: raw) else { return nil }
     let content = extractCLIText(from: payload) ?? ""
     let title = extractCLITitle(from: payload)
     return content.isEmpty ? nil : (content, title)
 }
 
-private func parseDensificationResponse(stdout: String, fileContent: String? = nil) -> DensificationResult {
+func parseDensificationResponse(stdout: String, fileContent: String? = nil) -> DensificationResult {
     let trimmedStdout = stdout.trimmingCharacters(in: .whitespacesAndNewlines)
     let trimmedFile = fileContent?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
     let source = trimmedFile ?? trimmedStdout
