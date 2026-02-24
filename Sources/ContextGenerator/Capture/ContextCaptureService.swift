@@ -235,7 +235,6 @@ public final class ContextCaptureService: ContextCapturing, @unchecked Sendable 
         let accessibilityText = extractAccessibilityText(
             appElement: appElement,
             focusedWindow: focusedWindow,
-            focusedElement: focusedElement,
             includeAppChromeRoots: captureCategory == .nativeApp
         )
         let accessibilityLines = normalizedLines(from: accessibilityText)
@@ -245,7 +244,6 @@ public final class ContextCaptureService: ContextCapturing, @unchecked Sendable 
             tabContentRawLines = extractCurrentTabAccessibilityLines(
                 appElement: appElement,
                 focusedWindow: focusedWindow,
-                focusedElement: focusedElement,
                 deduplicate: false
             )
         } else {
@@ -253,6 +251,7 @@ public final class ContextCaptureService: ContextCapturing, @unchecked Sendable 
         }
         let tabContentLines = deduplicatedLines(tabContentRawLines)
         let ocrDecision = ocrDecision(
+            for: captureCategory,
             accessibilityQuality: accessibilityQuality,
             accessibilityLines: accessibilityLines,
             hasContentRoot: !tabContentLines.isEmpty
@@ -300,7 +299,6 @@ public final class ContextCaptureService: ContextCapturing, @unchecked Sendable 
             let (filteredText, metrics) = filteredBrowserCombinedText(
                 appElement: appElement,
                 focusedWindow: focusedWindow,
-                focusedElement: focusedElement,
                 baselineCombinedText: combinedText,
                 preExtractedTabLines: tabContentLines,
                 preExtractedTabRawLines: tabContentRawLines
@@ -375,7 +373,6 @@ public final class ContextCaptureService: ContextCapturing, @unchecked Sendable 
     private func filteredBrowserCombinedText(
         appElement: AXUIElement,
         focusedWindow: AXUIElement?,
-        focusedElement: AXUIElement?,
         baselineCombinedText: String,
         preExtractedTabLines: [String]? = nil,
         preExtractedTabRawLines: [String]? = nil
@@ -405,7 +402,6 @@ public final class ContextCaptureService: ContextCapturing, @unchecked Sendable 
         let tabRawLines = preExtractedTabRawLines ?? extractCurrentTabAccessibilityLines(
             appElement: appElement,
             focusedWindow: focusedWindow,
-            focusedElement: focusedElement,
             deduplicate: false
         )
         let tabLines = preExtractedTabLines ?? deduplicatedLines(tabRawLines)
@@ -439,7 +435,7 @@ public final class ContextCaptureService: ContextCapturing, @unchecked Sendable 
                 protectedLines: protectedLines,
                 frequencies: ocrFrequencies,
                 removedByRule: &removedByRule
-            ).filter { isLikelyMeaningfulOCRLine($0) || containsMustKeepKeyword(in: $0.lowercased()) }
+            ).filter { isLikelyMeaningfulOCRLine($0) }
             removedByRule["ocrSectionExcluded", default: 0] += max(0, sections.ocrLines.count - ocrFilteredLines.count)
             if !ocrFilteredLines.isEmpty {
                 filteredLines = deduplicatedLines(filteredLines + ocrFilteredLines)
@@ -492,22 +488,30 @@ public final class ContextCaptureService: ContextCapturing, @unchecked Sendable 
         guard !ocrLines.isEmpty else {
             return nil
         }
-        if accessibilityLines.isEmpty {
-            return ocrLines.joined(separator: "\n")
-        }
-        guard !hasLikelyMeaningfulContent(accessibilityLines) else {
-            return nil
-        }
         let meaningfulOCRLines = deduplicatedLines(
-            ocrLines.filter { isLikelyMeaningfulOCRLine($0) || containsMustKeepKeyword(in: $0.lowercased()) }
+            ocrLines.filter { isLikelyMeaningfulOCRLine($0) }
         )
-        guard !meaningfulOCRLines.isEmpty else {
-            return nil
+        let ocrSeedLines = meaningfulOCRLines.isEmpty ? ocrLines : meaningfulOCRLines
+        if accessibilityLines.isEmpty {
+            return ocrSeedLines.joined(separator: "\n")
+        }
+        let ocrTokens = tokenSet(from: ocrSeedLines)
+        let alignedAccessibilityLines = deduplicatedLines(
+            accessibilityLines.filter { line in
+                containsMustKeepKeyword(in: line.lowercased()) || isAlignedWithOCR(line, ocrTokens: ocrTokens)
+            }
+        )
+        if !alignedAccessibilityLines.isEmpty {
+            let mergedLines = deduplicatedLines(alignedAccessibilityLines + ocrSeedLines)
+            AppLogger.debug(
+                "Non-browser OCR alignment selected [accessibilityLineCount=\(accessibilityLines.count) ocrLineCount=\(ocrLines.count) alignedAccessibilityLineCount=\(alignedAccessibilityLines.count) selectedLineCount=\(mergedLines.count)]"
+            )
+            return mergedLines.joined(separator: "\n")
         }
         AppLogger.debug(
-            "Non-browser OCR fallback selected [accessibilityLineCount=\(accessibilityLines.count) ocrLineCount=\(ocrLines.count) selectedLineCount=\(meaningfulOCRLines.count)]"
+            "Non-browser OCR fallback selected [accessibilityLineCount=\(accessibilityLines.count) ocrLineCount=\(ocrLines.count) selectedLineCount=\(ocrSeedLines.count)]"
         )
-        return meaningfulOCRLines.joined(separator: "\n")
+        return ocrSeedLines.joined(separator: "\n")
     }
 
     private func logBrowserFilteringMetrics(_ metrics: BrowserFilteringMetrics) {
@@ -521,29 +525,12 @@ public final class ContextCaptureService: ContextCapturing, @unchecked Sendable 
         )
     }
 
-    private func extractCurrentTabAccessibilityText(
-        appElement: AXUIElement,
-        focusedWindow: AXUIElement?,
-        focusedElement: AXUIElement?
-    ) -> String {
-        extractCurrentTabAccessibilityLines(
-            appElement: appElement,
-            focusedWindow: focusedWindow,
-            focusedElement: focusedElement,
-            deduplicate: true
-        ).joined(separator: "\n")
-    }
-
     private func extractCurrentTabAccessibilityLines(
         appElement: AXUIElement,
         focusedWindow: AXUIElement?,
-        focusedElement: AXUIElement?,
         deduplicate: Bool
     ) -> [String] {
         var roots: [AXUIElement] = []
-        if let focusedElement {
-            roots.append(contentsOf: browserContentRoots(startingAt: focusedElement))
-        }
         if let focusedWindow {
             roots.append(contentsOf: browserContentRoots(startingAt: focusedWindow))
         }
@@ -885,10 +872,14 @@ public final class ContextCaptureService: ContextCapturing, @unchecked Sendable 
     }
 
     private func ocrDecision(
+        for category: AppCaptureCategory,
         accessibilityQuality: AccessibilitySignalQuality,
         accessibilityLines: [String],
         hasContentRoot: Bool
     ) -> OCRDecision {
+        if category != .browser {
+            return OCRDecision(shouldCapture: true, reason: "ocrPreferredForDesktopApps")
+        }
         if accessibilityLines.isEmpty {
             return OCRDecision(shouldCapture: true, reason: "emptyAccessibility")
         }
@@ -964,8 +955,33 @@ public final class ContextCaptureService: ContextCapturing, @unchecked Sendable 
         return false
     }
 
-    private func wordCount(in normalizedLine: String) -> Int {
-        normalizedLine.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).count
+    private func tokenSet(from lines: [String]) -> Set<String> {
+        var tokens: Set<String> = []
+        for line in lines {
+            for token in line.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }) {
+                let normalized = String(token)
+                guard normalized.count >= 4 else {
+                    continue
+                }
+                if normalized.allSatisfy(\.isNumber) {
+                    continue
+                }
+                tokens.insert(normalized)
+            }
+        }
+        return tokens
+    }
+
+    private func isAlignedWithOCR(_ line: String, ocrTokens: Set<String>) -> Bool {
+        let lineTokens = tokenSet(from: [line])
+        guard !lineTokens.isEmpty else {
+            return false
+        }
+        let overlap = lineTokens.intersection(ocrTokens).count
+        if lineTokens.count == 1 {
+            return overlap >= 1
+        }
+        return overlap >= 2
     }
 
     private func normalizedLines(from text: String) -> [String] {
@@ -999,7 +1015,6 @@ public final class ContextCaptureService: ContextCapturing, @unchecked Sendable 
     private func extractAccessibilityText(
         appElement: AXUIElement,
         focusedWindow: AXUIElement?,
-        focusedElement: AXUIElement?,
         includeAppChromeRoots: Bool
     ) -> String {
         var lines: [String] = []
@@ -1008,10 +1023,6 @@ public final class ContextCaptureService: ContextCapturing, @unchecked Sendable 
         let deadline = Date().addingTimeInterval(captureTimeoutSeconds)
 
         var roots: [AXUIElement] = []
-
-        if let focusedElement {
-            roots.append(focusedElement)
-        }
 
         if let focusedWindow {
             roots.append(focusedWindow)
