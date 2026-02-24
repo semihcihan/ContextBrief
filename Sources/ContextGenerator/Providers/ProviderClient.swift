@@ -24,18 +24,20 @@ public struct DensificationResult {
 
 public struct ProviderTextRequest {
     static let commonPrompt = [
-        "Extract the semantic content from captured UI or OCR text.",
-        "Keep User-visible content that conveys meaning",
+        "Extract the semantic content from captured UI or OCR text",
+        "Keep user-visible content that conveys substantive information (requirements decisions questions answers logic constraints data)",
         """
         Remove:
-        - UI structure (navigation, menus, toolbars, sidebars, footers)
+        - UI structure (navigation menus toolbars sidebars footers)
         - Accessibility roles, control names, and layout markers
         - Repeated labels, decorative text, and fragmented tokens
         - Platform or app scaffolding not part of the main content
-        - Text that exists to operate the interface rather than convey information.
+        - Text that exists to operate the interface rather than convey information
+        - Greetings, acknowledgements, conversational filler, and coordination chatter
         """,
-        "Do not summarize, rewrite, or infer.",
-        "Return dense plain text only.",
+        "Preserve original wording of retained content",
+        "Do not summarize, rewrite, or infer",
+        "Return dense plain text only"
     ]
     public let systemInstruction: String?
     public let prompt: String
