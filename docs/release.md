@@ -21,6 +21,10 @@ swift test
 make release-dmg VERSION=1.0.0 BUILD_NUMBER=1
 ```
 
+To test "installed app" behavior (minimal PATH, as when user opens the app from DMG or Applications) without using GitHub or brew:
+- `make run-release-app-minimal-env` — runs the release executable with `PATH=/usr/bin:/bin:/usr/sbin:/sbin` so CLI resolution (e.g. finding `codex` under `/opt/homebrew/bin`) is exercised.
+- `make open-release-app` — opens the built `.app` via Finder (same as double-click after install); the process gets the same minimal environment as a real install.
+
 Verify artifacts:
 - `.build/release/ContextBrief.app`
 - `.build/release/ContextBrief.dmg`

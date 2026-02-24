@@ -28,7 +28,7 @@ DEBUG_ENV := $(DEBUG_ENV) CONTEXT_GENERATOR_TERMINAL_LOGS=1
 endif
 endif
 
-.PHONY: help dev dev-stop log app-icon release-app release-dmg run-release-app
+.PHONY: help dev dev-stop log app-icon release-app release-dmg run-release-app run-release-app-minimal-env open-release-app
 WATCH_PATTERN := watchexec -e swift --watch Sources --watch Package.swift --restart -- .*swift run $(APP_TARGET)
 APP_BUNDLE := .build/release/$(APP_BUNDLE_NAME).app
 APP_BUNDLE_EXEC := $(APP_BUNDLE)/Contents/MacOS/$(APP_EXECUTABLE_NAME)
@@ -58,6 +58,8 @@ help:
 		'                                            Build release .app and package .dmg' \
 		'  make run-release-app VERSION=1.0.0 BUILD_NUMBER=1' \
 		'                                            Build release app and run it' \
+		'  make run-release-app-minimal-env           Run release app with minimal PATH (test CLI resolution)' \
+		'  make open-release-app                      Open release .app via Finder (same as after DMG install)' \
 		'' \
 		'Config variables (override inline if needed):' \
 		'  LOG=0|1           enable debug + file logging (make dev log)' \
@@ -125,3 +127,14 @@ release-dmg: release-app
 run-release-app: release-app
 	@pkill -x "$(APP_EXECUTABLE_NAME)" >/dev/null 2>&1 || true
 	@exec env $(DEBUG_ENV) "$(APP_BUNDLE_EXEC)" -FIRDebugEnabled
+
+# Simulate "installed app" env: minimal PATH (no Homebrew), like when launched from Finder/DMG.
+# Use this to verify CLI binary resolution (e.g. codex found under /opt/homebrew/bin) without GitHub/brew.
+run-release-app-minimal-env: release-app
+	@pkill -x "$(APP_EXECUTABLE_NAME)" >/dev/null 2>&1 || true
+	@echo "Launching with PATH=/usr/bin:/bin:/usr/sbin:/sbin (simulates GUI launch)..."
+	@exec env PATH=/usr/bin:/bin:/usr/sbin:/sbin $(DEBUG_ENV) GOOGLE_SERVICE_INFO_PLIST_PATH="$(CURDIR)/Sources/ContextGeneratorApp/Resources/GoogleService-Info.plist" "$(APP_BUNDLE_EXEC)"
+
+# Open the release .app via Finder (same as double-click after DMG install). Best test for "installed" behavior.
+open-release-app: release-app
+	@open "$(APP_BUNDLE)"

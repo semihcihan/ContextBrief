@@ -51,10 +51,6 @@ Cross-CLI "inject into whatever session is currently active" is not a reliable u
 - Claude headless/non-interactive usage (`-p`, output formats): [Claude headless docs](https://code.claude.com/docs/en/headless)
 - VS Code chat CLI and stdin behavior: [VS Code command-line docs](https://code.visualstudio.com/docs/configure/command-line)
 
-## Reference patterns from summarize-main
-
-The project at `/Users/semihcihan/Downloads/summarize-main/src/llm` has production-quality patterns we should reuse.
-
 ### 1) Binary resolution with overrides
 
 - Resolve executable path in this order:
@@ -62,6 +58,8 @@ The project at `/Users/semihcihan/Downloads/summarize-main/src/llm` has producti
   2. provider-specific env override (for example `CODEX_PATH`)
   3. app-level env override
   4. default binary name
+
+- **GUI app (DMG/Applications):** When launched from Finder, the app does not inherit the shell `PATH`. So when no `*_PATH` env is set, we resolve default binary names by first asking the user’s login shell (`$SHELL -lic 'command -v <binary>'`) and cache the absolute result, then fallback-searching common locations: `/opt/homebrew/bin`, `/usr/local/bin`, `~/bin`, `~/.local/bin`, `~/.volta/bin`, and `~/.nvm/versions/node/*/bin`. During execution we also prepend discovered paths to subprocess `PATH` so shebang launchers like `#!/usr/bin/env node` work in GUI launches.
 
 ### 2) Non-interactive execution contract
 
