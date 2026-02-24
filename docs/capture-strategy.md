@@ -22,6 +22,7 @@ Accessibility capture always runs first.
 
 - `browser` and `webViewHeavy` avoid global chrome roots (`AXMenuBar`, app root) to reduce noise.
 - `nativeApp` keeps broader roots for recall.
+- Root seeding is window-based; `AXFocusedUIElement` is not used as a capture root.
 
 ### 3) Accessibility quality tier
 
@@ -35,7 +36,10 @@ Must-keep anchors include failure/risk/status terms such as `error`, `warning`, 
 
 ## OCR Policy
 
-OCR is conditional and runs only when signal risk is high.
+OCR policy is category-aware:
+
+- `browser`: OCR is conditional and runs only when signal risk is high.
+- `nativeApp` / `webViewHeavy`: OCR is always captured and used as a visibility anchor.
 
 - `empty accessibility` -> run OCR
 - `high accessibility` -> skip OCR
@@ -76,4 +80,4 @@ Repetition frequency is computed from normalized non-deduplicated candidate line
 
 - Baseline capture is always retained.
 - Filtered capture is preferred when available and non-empty.
-- For non-browser apps, OCR-only filtered fallback is used when accessibility exists but appears low-signal.
+- For non-browser apps, filtered output keeps accessibility lines that align with OCR-visible tokens and merges OCR lines; if alignment fails, OCR lines are used.
