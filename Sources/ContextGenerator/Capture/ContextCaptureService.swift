@@ -253,7 +253,6 @@ public final class ContextCaptureService: ContextCapturing, @unchecked Sendable 
         }
         let tabContentLines = deduplicatedLines(tabContentRawLines)
         let ocrDecision = ocrDecision(
-            for: captureCategory,
             accessibilityQuality: accessibilityQuality,
             accessibilityLines: accessibilityLines,
             hasContentRoot: !tabContentLines.isEmpty
@@ -886,7 +885,6 @@ public final class ContextCaptureService: ContextCapturing, @unchecked Sendable 
     }
 
     private func ocrDecision(
-        for category: AppCaptureCategory,
         accessibilityQuality: AccessibilitySignalQuality,
         accessibilityLines: [String],
         hasContentRoot: Bool
@@ -898,9 +896,6 @@ public final class ContextCaptureService: ContextCapturing, @unchecked Sendable 
         case .high:
             return OCRDecision(shouldCapture: false, reason: "highAccessibilitySignal")
         case .medium:
-            if category == .nativeApp {
-                return OCRDecision(shouldCapture: false, reason: "mediumSignalNativeApp")
-            }
             if !hasContentRoot {
                 return OCRDecision(shouldCapture: true, reason: "mediumSignalMissingContentRoot")
             }
