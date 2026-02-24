@@ -142,6 +142,12 @@ jobs:
             brew install semihcihan/contextbrief/contextbrief
             ```
 
+            To update:
+
+            ```bash
+            brew update && brew upgrade contextbrief
+            ```
+
       - name: Update Homebrew tap cask
         if: ${{ env.HOMEBREW_TAP_REPO_TOKEN != '' && vars.HOMEBREW_TAP_REPO != '' }}
         env:
