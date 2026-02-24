@@ -40,9 +40,8 @@ OCR is conditional and runs only when signal risk is high.
 - `empty accessibility` -> run OCR
 - `high accessibility` -> skip OCR
 - `medium accessibility`:
-  - `nativeApp` -> skip OCR
-  - `browser` / `webViewHeavy` -> run OCR if content root is missing
-  - `browser` / `webViewHeavy` -> run OCR if must-keep anchors are missing
+  - run OCR if content root is missing
+  - run OCR if must-keep anchors are missing
 - `low accessibility` -> run OCR
 
 ## OCR Scope
