@@ -1,0 +1,10 @@
+{
+  "name": "context-generator",
+  "private": true,
+  "scripts": {
+    "demo-gif": "node scripts/capture_demo_gif.js"
+  },
+  "devDependencies": {
+    "playwright": "^1.49.0"
+  }
+}

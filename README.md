@@ -2,6 +2,10 @@
 
 A macOS menu bar app that helps developers collect context from the frontmost app (GitHub, GitLab, Jira, Linear, Slack, Notion, Confluence, docs, and web pages) with `⌃ ⌘ C`, then paste one clean brief into coding agents with `⌃ ⌘ V`.
 
+## Demo
+
+![Context Brief demo](demo/demo.gif)
+
 ## What it does
 
 - Captures context from the frontmost selected app or browser tab, including page content beyond what is currently visible.
