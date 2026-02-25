@@ -1,0 +1,602 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #1a1a1a;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+.frame {
+  position: relative;
+  width: 100%;
+  max-width: 1280px;
+  aspect-ratio: 16 / 9;
+  background: #fff;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.scenes-track {
+  position: absolute;
+  inset: 0;
+  width: 400%;
+  height: 100%;
+  display: flex;
+  transition: transform 0.25s ease-out;
+}
+
+.frame[data-scene-index="0"] .scenes-track { transform: translateX(0); }
+.frame[data-scene-index="1"] .scenes-track { transform: translateX(-25%); }
+.frame[data-scene-index="2"] .scenes-track { transform: translateX(-50%); }
+.frame[data-scene-index="3"] .scenes-track { transform: translateX(-75%); }
+
+.scenes-track .scene {
+  flex: 0 0 25%;
+  width: 25%;
+  height: 100%;
+  min-width: 0;
+}
+
+.flash-overlay {
+  position: absolute;
+  inset: 0;
+  background: #fff;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.frame.trigger-flash .flash-overlay {
+  animation: flash 0.5s ease-out;
+}
+
+@keyframes flash {
+  0% { opacity: 0; }
+  40% { opacity: 0.6; }
+  100% { opacity: 0; }
+}
+
+.caption-overlay {
+  position: absolute;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 20;
+}
+
+.caption-overlay.caption-visible {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.caption-overlay.caption-visible .caption-keys {
+  position: absolute;
+  bottom: 25%;
+  left: 50%;
+  transform: translate(-50%, 50%);
+}
+
+.caption-keys {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 24px 40px;
+  background: rgba(0, 0, 0, 0.75);
+  color: #fff;
+  font-size: 48px;
+  font-weight: 600;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  border-radius: 12px;
+  letter-spacing: 0.02em;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+
+.caption-overlay.caption-paste .caption-keys {
+  background: rgba(35, 134, 54, 0.9);
+  color: #fff;
+  box-shadow: 0 4px 16px rgba(35, 134, 54, 0.4);
+}
+
+.scene.jira-scene {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  background: #fff;
+}
+
+.app-icon {
+  flex-shrink: 0;
+  display: block;
+}
+
+.jira-topbar .app-icon {
+  width: 36px;
+  height: 36px;
+}
+
+.jira-topbar {
+  height: 80px;
+  background: #0747a6;
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  gap: 12px;
+}
+
+.jira-logo {
+  color: #fff;
+  font-weight: 700;
+  font-size: 36px;
+  letter-spacing: -0.02em;
+}
+
+.jira-topbar-spacer {
+  flex: 1;
+}
+
+.jira-content {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.jira-sidebar {
+  width: 80px;
+  background: #f4f5f7;
+  border-right: 1px solid #dfe1e6;
+}
+
+.jira-main {
+  flex: 1;
+  padding: 20px 28px 28px;
+  background: #fff;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.jira-ticket-header {
+  margin-bottom: 16px;
+}
+
+.jira-key {
+  font-size: 18px;
+  color: #5e6c84;
+  margin-bottom: 6px;
+}
+
+.jira-title {
+  font-size: 36px;
+  font-weight: 600;
+  color: #172b4d;
+  margin-bottom: 14px;
+  line-height: 1.25;
+  max-width: 90%;
+}
+
+.jira-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.jira-status {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 14px;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 600;
+  background: #de350b;
+  color: #fff;
+}
+
+.jira-description {
+  margin-top: 20px;
+}
+
+.jira-description-label {
+  font-size: 17px;
+  font-weight: 600;
+  color: #5e6c84;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 10px;
+}
+
+.jira-redact {
+  height: 21px;
+  background: #ebecf0;
+  border-radius: 4px;
+  margin-bottom: 12px;
+}
+
+.jira-redact:nth-child(2) {
+  width: 88%;
+}
+
+.jira-redact:nth-child(3) {
+  width: 72%;
+}
+
+.jira-redact:nth-child(4) {
+  width: 82%;
+}
+
+.jira-redact:nth-child(5) {
+  width: 95%;
+}
+
+.jira-redact:last-child {
+  margin-bottom: 0;
+}
+
+.slack-scene {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  background: #3f0e40;
+}
+
+.slack-sidebar {
+  width: 220px;
+  background: #4a154b;
+  display: flex;
+  flex-direction: column;
+  padding: 20px 0 0 0;
+}
+
+.slack-sidebar-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 16px 16px;
+}
+
+.slack-sidebar .app-icon {
+  width: 32px;
+  height: 32px;
+}
+
+.slack-logo {
+  color: #fff;
+  font-weight: 700;
+  font-size: 36px;
+  letter-spacing: -0.02em;
+}
+
+.slack-channels {
+  flex: 1;
+  padding: 0 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.slack-channel-item {
+  font-size: 18px;
+  color: #fff;
+  padding: 6px 8px;
+  border-radius: 4px;
+}
+
+.slack-channel-active {
+  background: rgba(255, 255, 255, 0.15);
+  font-weight: 600;
+}
+
+.slack-channel-redact {
+  height: 21px;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  width: 100%;
+}
+
+.slack-channel-redact-short {
+  width: 70%;
+}
+
+.slack-main {
+  flex: 1;
+  padding: 20px 28px 28px;
+  display: flex;
+  flex-direction: column;
+  background: #3f0e40;
+}
+
+.slack-thread-header {
+  font-size: 36px;
+  font-weight: 600;
+  color: #fff;
+  margin-bottom: 20px;
+  line-height: 1.25;
+}
+
+.slack-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.slack-msg {
+  max-width: 90%;
+  display: flex;
+  flex-direction: row;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.slack-msg-avatar {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.slack-msg-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.slack-msg-line {
+  font-size: 17px;
+  line-height: 1.4;
+  color: rgba(255, 255, 255, 0.95);
+}
+
+.slack-msg-redact {
+  height: 21px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  width: 100%;
+}
+
+.slack-msg-redact-short {
+  width: 65%;
+}
+
+.github-scene {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  background: #fff;
+}
+
+.github-header {
+  height: 80px;
+  background: #24292f;
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  gap: 12px;
+  color: #fff;
+}
+
+.github-header .app-icon {
+  width: 36px;
+  height: 36px;
+}
+
+.github-logo {
+  font-weight: 700;
+  font-size: 36px;
+  letter-spacing: -0.02em;
+}
+
+.github-repo {
+  color: #8b949e;
+  font-size: 14px;
+}
+
+.github-main {
+  flex: 1;
+  padding: 20px 28px 28px;
+  background: #fff;
+}
+
+.github-pr-title {
+  font-size: 36px;
+  font-weight: 600;
+  color: #24292f;
+  margin-bottom: 8px;
+  line-height: 1.25;
+  max-width: 90%;
+}
+
+.github-pr-meta {
+  font-size: 18px;
+  color: #8b949e;
+  margin-bottom: 20px;
+}
+
+.github-issue-badge {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  background: #238636;
+  padding: 4px 10px;
+  border-radius: 4px;
+  margin-bottom: 10px;
+}
+
+.github-issue-solution {
+  font-size: 17px;
+  line-height: 1.5;
+  color: #24292f;
+  margin-bottom: 16px;
+  padding: 12px;
+  background: #f6f8fa;
+  border-radius: 6px;
+  border: 1px solid #e1e4e8;
+}
+
+.github-issue-solution code {
+  font-family: ui-monospace, monospace;
+  font-size: 15px;
+  background: #e1e4e8;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.github-description-label,
+.github-files-label {
+  font-size: 17px;
+  font-weight: 600;
+  color: #5e6c84;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 10px;
+  margin-top: 20px;
+}
+
+.github-main .github-description-label {
+  margin-top: 0;
+}
+
+.github-files-label {
+  margin-top: 24px;
+}
+
+.github-redact {
+  height: 21px;
+  background: #ebecf0;
+  border-radius: 4px;
+  margin-bottom: 12px;
+  width: 90%;
+}
+
+.github-redact-short {
+  width: 55%;
+}
+
+.terminal-scene {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  background: #1e1e1e;
+}
+
+.terminal-header {
+  height: 80px;
+  background: #2d2d2d;
+  color: #ccc;
+  font-size: 20px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  gap: 12px;
+}
+
+.terminal-header .app-icon {
+  width: 36px;
+  height: 36px;
+  color: #9cdcfe;
+}
+
+.terminal-main {
+  flex: 1;
+  padding: 20px 28px 28px;
+  font-family: ui-monospace, monospace;
+  font-size: 22px;
+  color: #d4d4d4;
+}
+
+.terminal-prompt-line {
+  margin-bottom: 16px;
+  font-size: 22px;
+  min-height: 1.4em;
+}
+
+.terminal-prompt-prefix {
+  color: #569cd6;
+}
+
+.terminal-typed {
+  color: #d4d4d4;
+}
+
+.terminal-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  background: #d4d4d4;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  animation: terminal-cursor-blink 1s step-end infinite;
+}
+
+.terminal-cursor.terminal-cursor-off {
+  animation: none;
+  opacity: 0;
+}
+
+@keyframes terminal-cursor-blink {
+  50% { opacity: 0; }
+}
+
+.terminal-pasted[hidden] {
+  display: none;
+}
+
+.terminal-pasted {
+  background: #252526;
+  border-radius: 8px;
+  padding: 20px 24px;
+  border: 1px solid #3c3c3c;
+}
+
+.terminal-brief-label {
+  font-size: 17px;
+  font-weight: 600;
+  color: #8b949e;
+  margin-bottom: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.terminal-brief-section {
+  font-size: 18px;
+  line-height: 1.5;
+  color: #d4d4d4;
+  margin-bottom: 16px;
+}
+
+.terminal-brief-source {
+  color: #6a9955;
+  font-weight: 600;
+}
+
+.terminal-brief-section:last-child {
+  margin-bottom: 0;
+}
+
+.terminal-thinking {
+  font-size: 18px;
+  color: #8b949e;
+  margin-top: 16px;
+}
+
+.terminal-thinking[hidden] {
+  display: none;
+}
