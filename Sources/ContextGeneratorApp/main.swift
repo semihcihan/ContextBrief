@@ -2,6 +2,7 @@ import AppKit
 import FirebaseAnalytics
 import FirebaseCore
 import FirebaseCrashlytics
+import FirebaseRemoteConfig
 
 func firebaseConfigPath() -> String? {
     let environment = ProcessInfo.processInfo.environment
@@ -19,6 +20,7 @@ else {
     fatalError("Missing or invalid Firebase configuration file.")
 }
 FirebaseApp.configure(options: firebaseOptions)
+_ = RemoteConfiguration.shared
 Analytics.setAnalyticsCollectionEnabled(true)
 EventTracker.shared.track(.appLaunch)
 Crashlytics.crashlytics().setCrashlyticsCollectionEnabled(true)

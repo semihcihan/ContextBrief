@@ -23,7 +23,7 @@ public struct DensificationResult {
 }
 
 public struct ProviderTextRequest {
-    static let commonPrompt = [
+    public static let defaultCommonPrompt: [String] = [
         "Convert captured UI or OCR text into dense contextual content.",
         """
         Preserve exactly:
@@ -48,6 +48,13 @@ public struct ProviderTextRequest {
         "Do not omit potentially important context",
         "Return dense plain text only"
     ]
+
+    public static var commonPromptProvider: (() -> [String])?
+
+    static var commonPrompt: [String] {
+        commonPromptProvider?() ?? defaultCommonPrompt
+    }
+
     public let systemInstruction: String?
     public let prompt: String
 
