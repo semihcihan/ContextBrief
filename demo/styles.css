@@ -560,10 +560,24 @@ body {
 }
 
 .terminal-pasted {
+  position: relative;
   background: #252526;
   border-radius: 8px;
   padding: 20px 24px;
   border: 1px solid #3c3c3c;
+}
+
+.terminal-pasted-flash {
+  position: absolute;
+  inset: 0;
+  background: #fff;
+  opacity: 0;
+  pointer-events: none;
+  border-radius: 8px;
+}
+
+.terminal-pasted.trigger-flash .terminal-pasted-flash {
+  animation: flash 0.5s ease-out;
 }
 
 .terminal-brief-label {
