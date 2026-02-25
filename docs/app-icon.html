@@ -31,12 +31,12 @@
       display: grid;
       place-items: center;
       background:
-        radial-gradient(circle at 18% 14%, rgba(213, 244, 229, 0.28) 0%, rgba(213, 244, 229, 0) 42%),
-        radial-gradient(circle at 82% 90%, rgba(112, 168, 143, 0.24) 0%, rgba(112, 168, 143, 0) 48%),
-        radial-gradient(circle at center, #4f7d6b 0%, #3e6558 30%, #314c44 58%, #273532 82%, #1b2221 100%);
+        radial-gradient(circle at 18% 14%, rgba(160, 230, 200, 0.32) 0%, rgba(160, 230, 200, 0) 42%),
+        radial-gradient(circle at 82% 90%, rgba(160, 240, 210, 0.5) 0%, rgba(160, 240, 210, 0) 48%),
+        radial-gradient(circle at center, #6aab8f 0%, #56a080 30%, #458a6a 58%, #356a52 82%, #224538 100%);
       box-shadow:
-        inset 0 1px 0 rgba(255, 255, 255, 0.24),
-        inset 0 -30px 78px rgba(9, 14, 13, 0.3);
+        inset 0 1px 0 rgba(255, 255, 255, 0.18),
+        inset 0 -30px 78px rgba(9, 14, 13, 0.16);
     }
 
     main::before {
@@ -45,9 +45,9 @@
       inset: 0;
       background: linear-gradient(
         180deg,
-        rgba(255, 255, 255, 0.3) 0%,
-        rgba(255, 255, 255, 0.08) 28%,
-        rgba(255, 255, 255, 0) 56%
+        rgba(255, 255, 255, 0.14) 0%,
+        rgba(255, 255, 255, 0.06) 18%,
+        rgba(255, 255, 255, 0) 40%
       );
       pointer-events: none;
     }
@@ -56,7 +56,7 @@
       content: "";
       position: relative;
       inset: 0;
-      box-shadow: inset 0 0 0 1px rgba(227, 255, 243, 0.14);
+      box-shadow: inset 0 0 0 1px rgba(235, 255, 245, 0.32);
       pointer-events: none;
     }
 
@@ -87,29 +87,29 @@
     .wordmark {
       position: relative;
       margin: 0;
-      color: #214438;
+      color: #1a3a30;
       letter-spacing: -0.05em;
       font-size: 282px;
       font-weight: 660;
       line-height: 1;
       transform: translateY(-2px);
-      text-shadow: 0 1px 0 rgba(255, 255, 255, 0.42);
+      text-shadow: 0 1px 0 rgba(255, 255, 255, 0.58);
     }
   </style>
 </head>
 <body>
   <main aria-label="Ctx app icon">
     <svg class="bg-layer" viewBox="0 0 1024 1024" aria-hidden="true">
-      <circle cx="180" cy="220" r="240" fill="#9ee4c5" fill-opacity="0.14" />
-      <circle cx="850" cy="830" r="300" fill="#8fd7b8" fill-opacity="0.1" />
-      <circle cx="760" cy="250" r="130" fill="#b8edd7" fill-opacity="0.12" />
-      <rect x="-140" y="560" width="820" height="240" rx="108" transform="rotate(-17 270 680)" fill="#9adfbe" fill-opacity="0.1" />
-      <rect x="430" y="90" width="590" height="190" rx="95" transform="rotate(17 725 185)" fill="#b6e8d1" fill-opacity="0.09" />
+      <circle cx="180" cy="220" r="240" fill="#b0fff0" fill-opacity="0.38" />
+      <circle cx="850" cy="830" r="300" fill="#98ffe8" fill-opacity="0.34" />
+      <circle cx="760" cy="250" r="130" fill="#a8e8d8" fill-opacity="0.2" />
+      <rect x="-140" y="560" width="820" height="240" rx="108" transform="rotate(-17 270 680)" fill="#a8ffe0" fill-opacity="0.32" />
+      <rect x="430" y="90" width="590" height="190" rx="95" transform="rotate(17 725 185)" fill="#a0e8d8" fill-opacity="0.18" />
     </svg>
     <svg class="fg-layer" viewBox="0 0 1024 1024" aria-hidden="true">
-      <rect x="220" y="220" width="584" height="584" rx="198" fill="#ecfaf3" fill-opacity="0.12" />
-      <rect x="270" y="270" width="484" height="484" rx="164" fill="#ecfaf3" fill-opacity="0.16" />
-      <circle cx="512" cy="512" r="286" fill="none" stroke="#dff7ea" stroke-opacity="0.22" stroke-width="14" />
+      <rect x="220" y="220" width="584" height="584" rx="198" fill="#e0fff8" fill-opacity="0.36" />
+      <rect x="270" y="270" width="484" height="484" rx="164" fill="#e0fff8" fill-opacity="0.44" />
+      <circle cx="512" cy="512" r="286" fill="none" stroke="#d8fff0" stroke-opacity="0.5" stroke-width="14" />
     </svg>
     <div class="mark" aria-hidden="true">
       <p class="wordmark">Ctx</p>
