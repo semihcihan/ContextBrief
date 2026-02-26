@@ -9,8 +9,9 @@ const VIDEO_DIR = path.join(__dirname, "..", "tmp-video");
 const OUTPUT_GIF = path.join(DEMO_DIR, "demo.gif");
 const PALETTE_PATH = path.join(VIDEO_DIR, "palette.png");
 const VIEWPORT = { width: 1280, height: 720 };
+const GIF_SIZE = { width: 960, height: 540 };
 const DURATION_MS = 20000;
-const GIF_FPS = 20;
+const GIF_FPS = 12;
 
 async function main() {
   if (!fs.existsSync(INDEX_HTML)) {
@@ -40,7 +41,9 @@ async function main() {
   const videoPath = await video.path();
   await browser.close();
 
-  // Two-pass GIF encoding (palettegen/paletteuse) gives better colors and less banding.
+  const w = GIF_SIZE.width;
+  const h = GIF_SIZE.height;
+  // Two-pass GIF encoding (palettegen/paletteuse) at smaller size for lower file size.
   execSync(
     [
       "ffmpeg",
@@ -48,7 +51,7 @@ async function main() {
       "-i",
       `"${videoPath}"`,
       "-vf",
-      `"fps=${GIF_FPS},scale=${VIEWPORT.width}:${VIEWPORT.height}:flags=lanczos,palettegen=stats_mode=diff"`,
+      `"fps=${GIF_FPS},scale=${w}:${h}:flags=lanczos,palettegen=stats_mode=diff:max_colors=192"`,
       `"${PALETTE_PATH}"`,
     ].join(" "),
     { stdio: "inherit" }
@@ -63,7 +66,7 @@ async function main() {
       "-i",
       `"${PALETTE_PATH}"`,
       "-lavfi",
-      `"fps=${GIF_FPS},scale=${VIEWPORT.width}:${VIEWPORT.height}:flags=lanczos[x];[x][1:v]paletteuse=dither=sierra2_4a:diff_mode=rectangle"`,
+      `"fps=${GIF_FPS},scale=${w}:${h}:flags=lanczos[x];[x][1:v]paletteuse=dither=sierra2_4a:diff_mode=rectangle"`,
       `"${OUTPUT_GIF}"`,
     ].join(" "),
     { stdio: "inherit" }
