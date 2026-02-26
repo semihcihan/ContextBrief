@@ -17,3 +17,7 @@ DerivedData/
 
 # App log file
 .logs.txt
+
+# Demo GIF capture
+node_modules/
+tmp-video/

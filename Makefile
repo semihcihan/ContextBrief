@@ -28,7 +28,7 @@ DEBUG_ENV := $(DEBUG_ENV) CONTEXT_GENERATOR_TERMINAL_LOGS=1
 endif
 endif
 
-.PHONY: help dev dev-stop log app-icon release-app release-dmg run-release-app run-release-app-minimal-env open-release-app
+.PHONY: help dev dev-stop log app-icon demo-gif release-app release-dmg run-release-app run-release-app-minimal-env open-release-app
 WATCH_PATTERN := watchexec -e swift --watch Sources --watch Package.swift --restart -- .*swift run $(APP_TARGET)
 APP_BUNDLE := .build/release/$(APP_BUNDLE_NAME).app
 APP_BUNDLE_EXEC := $(APP_BUNDLE)/Contents/MacOS/$(APP_EXECUTABLE_NAME)
@@ -52,6 +52,7 @@ help:
 		'  make dev log LOG_TERMINAL=1               Same as dev log, also print logs to terminal' \
 		'  make dev-stop                             Stop watcher and running app process' \
 		'  make app-icon                             Regenerate local AppIcon.icns + AppIcon.iconset from docs/app-icon.html' \
+		'  make demo-gif                             Capture demo/index.html?play=1 as demo/demo.gif (requires Node, Playwright, ffmpeg)' \
 		'  make release-app VERSION=1.0.0 BUILD_NUMBER=1' \
 		'                                            Build release .app bundle in .build/release/' \
 		'  make release-dmg VERSION=1.0.0 BUILD_NUMBER=1' \
@@ -95,6 +96,17 @@ app-icon:
 	@test -f "$(APP_ICON_SCRIPT)" || { echo "Missing icon generator script: $(APP_ICON_SCRIPT)"; exit 1; }
 	@test -f "$(APP_ICON_SOURCE)" || { echo "Missing icon source HTML: $(APP_ICON_SOURCE)"; exit 1; }
 	@bash "$(APP_ICON_SCRIPT)" "$(APP_ICON_SOURCE)" "$(APP_ICON_OUTPUT_DIR)" "AppIcon"
+
+# Capture demo play sequence as GIF. Requires Node.js, Playwright (npm install), and ffmpeg.
+DEMO_GIF_SCRIPT := $(CURDIR)/scripts/capture_demo_gif.js
+DEMO_GIF_OUTPUT := $(CURDIR)/demo/demo.gif
+demo-gif:
+	@command -v node >/dev/null 2>&1 || { echo "Node.js required. Install from nodejs.org or brew install node"; exit 1; }
+	@command -v ffmpeg >/dev/null 2>&1 || { echo "ffmpeg required. Install with: brew install ffmpeg"; exit 1; }
+	@test -f "$(DEMO_GIF_SCRIPT)" || { echo "Missing $(DEMO_GIF_SCRIPT)"; exit 1; }
+	@cd "$(CURDIR)" && (test -d node_modules || npm install)
+	@cd "$(CURDIR)" && npx playwright install chromium
+	@cd "$(CURDIR)" && node scripts/capture_demo_gif.js
 
 # Build distributable .app with templated Info.plist metadata.
 release-app:
