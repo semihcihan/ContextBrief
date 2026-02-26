@@ -558,23 +558,22 @@ final class MenuBarAppController: NSObject, NSApplicationDelegate, NSMenuDelegat
             refreshMenuState()
             return
         }
-        copyCurrentContext(mode: .dense)
+        copyCurrentContext(mode: .dense, source: source)
     }
 
-    private func copyCurrentContext(mode: ExportMode) {
+    private func copyCurrentContext(mode: ExportMode, source: String? = nil) {
         do {
             let context = try sessionManager.currentContext()
             let text = try exportService.exportText(contextId: context.id, mode: mode)
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(text, forType: .string)
             attemptPasteCurrentClipboard()
-            eventTracker.track(
-                .copyContextSucceeded,
-                parameters: [
-                    "mode": analyticsExportModeName(mode),
-                    "length": text.count
-                ]
-            )
+            var params: [String: Any] = [
+                "mode": analyticsExportModeName(mode),
+                "length": text.count
+            ]
+            if let source { params["source"] = source }
+            eventTracker.track(.copyContextSucceeded, parameters: params)
             AppLogger.debug("copyCurrentContext success contextId=\(context.id.uuidString) mode=dense chars=\(text.count)")
             updateFeedback("Copied dense context")
         } catch {
@@ -1193,7 +1192,13 @@ extension MenuBarAppController: SnapshotProcessingCoordinatorDelegate {
             return
         }
         AppLogger.debug("captureContext success source=\(source) snapshotId=\(result.snapshot.id.uuidString) contextId=\(result.context.id.uuidString)")
-        eventTracker.track(.captureSucceeded, parameters: ["sequence": result.snapshot.sequence])
+        eventTracker.track(
+            .captureSucceeded,
+            parameters: [
+                "sequence": result.snapshot.sequence,
+                "app_name": result.snapshot.appName
+            ]
+        )
         updateFeedback("Snapshot added to \(result.context.title)")
         Task { @MainActor [weak self] in
             guard let self else {
