@@ -12,11 +12,13 @@
   var captionKeysEl = document.querySelector(".caption-keys");
   var flashEl = document.querySelector(".flash-overlay");
   var terminalPasted = document.querySelector(".terminal-pasted");
+  var terminalPastedFlash = document.querySelector(".terminal-pasted-flash");
   var terminalThinking = document.querySelector(".terminal-thinking");
   var terminalTyped = document.querySelector(".terminal-typed");
   var terminalCursor = document.querySelector(".terminal-cursor");
 
-  var sceneIndex = { jira: 0, slack: 1, github: 2, terminal: 3 }[sceneParam] ?? 0;
+  var sceneIndex =
+    { jira: 0, slack: 1, github: 2, terminal: 3 }[sceneParam] ?? 0;
   if (!play) frame.setAttribute("data-scene-index", String(sceneIndex));
 
   if (!play) {
@@ -34,7 +36,7 @@
         function () {
           frame.classList.remove("trigger-flash");
         },
-        { once: true }
+        { once: true },
       );
     }
   }
@@ -73,7 +75,21 @@
         function () {
           frame.classList.remove("trigger-flash");
         },
-        { once: true }
+        { once: true },
+      );
+    }
+
+    function runFlashPasted() {
+      if (!terminalPasted || !terminalPastedFlash) return;
+      terminalPasted.hidden = false;
+      terminalPasted.classList.add("trigger-flash");
+      terminalPastedFlash.addEventListener(
+        "animationend",
+        function () {
+          terminalPasted.classList.remove("trigger-flash");
+          runThinkingAnimation();
+        },
+        { once: true },
       );
     }
 
@@ -89,7 +105,8 @@
           i += 1;
           setTimeout(addChar, 80);
         } else {
-          if (terminalCursor) terminalCursor.classList.add("terminal-cursor-off");
+          if (terminalCursor)
+            terminalCursor.classList.add("terminal-cursor-off");
           if (cb) setTimeout(cb, 200);
         }
       }
@@ -158,12 +175,8 @@
         setTimeout(function () {
           showCaption("paste");
           setTimeout(function () {
-            runFlash();
+            runFlashPasted();
           }, 200);
-          setTimeout(function () {
-            if (terminalPasted) terminalPasted.hidden = false;
-            runThinkingAnimation();
-          }, 800);
           setTimeout(function () {
             hideCaption();
           }, 2000);

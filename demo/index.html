@@ -132,6 +132,7 @@
             <span class="terminal-cursor"></span>
           </div>
           <div class="terminal-pasted" hidden>
+            <div class="terminal-pasted-flash" aria-hidden="true"></div>
             <div class="terminal-brief-label">Context brief</div>
             <div class="terminal-brief-section"><span class="terminal-brief-source">Jira AUTH-891</span> — Login fails on Safari, redirect loop after sign-in. In Progress. Users get stuck in a loop when signing in on Safari; the session cookie or redirect flow is broken for that browser. Fix the session cookie and redirect flow so Safari users can log in successfully.</div>
             <div class="terminal-brief-section"><span class="terminal-brief-source">Slack #auth-safari-bug</span> — Scope: only Safari (confirmed). No reports from Chrome or Firefox. When you fix it, add some logging around that path so we can debug if it happens again. Consider adding a metric so we can alert if Safari login failures spike.</div>
