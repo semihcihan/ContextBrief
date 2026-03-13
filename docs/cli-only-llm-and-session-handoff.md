@@ -149,6 +149,9 @@ The app now includes these reliability guardrails in the provider layer:
 - Safety bounds:
   - Enforces max prompt size before launching a CLI process.
   - Bounds error snippets and response size to keep logs/UI stable.
+- Neutral subprocess cwd:
+  - CLI commands run from a dedicated temp working directory (`$TMPDIR/contextbrief-cli-workdir`) by default.
+  - Prevents accidental scans of protected system paths (for example `/Library/Bluetooth`) when GUI app cwd is `/`.
 
 ## Product behavior (v1 for this direction)
 

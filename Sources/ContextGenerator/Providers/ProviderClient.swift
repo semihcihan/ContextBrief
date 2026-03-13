@@ -525,6 +525,16 @@ private func resolveCLIBinary(for provider: ProviderName) -> String {
     return candidate
 }
 
+private func defaultCLIWorkingDirectoryURL() -> URL {
+    let fileManager = FileManager.default
+    let directory = fileManager.temporaryDirectory
+        .appendingPathComponent("contextbrief-cli-workdir", isDirectory: true)
+    if !fileManager.fileExists(atPath: directory.path) {
+        try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+    }
+    return directory
+}
+
 private func runCLICommand(
     provider: ProviderName,
     binary: String,
@@ -560,6 +570,7 @@ private func runCLICommand(
             processArguments.insert(binary, at: 0)
         }
         process.arguments = processArguments
+        process.currentDirectoryURL = defaultCLIWorkingDirectoryURL()
         var mergedEnvironment = ProcessInfo.processInfo.environment
         let existingPath = mergedEnvironment["PATH"] ?? ""
         var searchPaths = cliBinarySearchPaths()
